@@ -7,26 +7,31 @@ from typing import Any
 from flask import current_app
 
 from app.extensions import db
-from app.models import ChatThread, PendingMemory, User
+from app.models import ChatMessage, ChatThread, PendingMemory, User
+from app.services.conversation_summary import (
+    snapshot_context_message,
+    summarize_overflowing_conversation,
+)
 from app.services.rag_memory import format_memory_search_results, search_long_term_memories
 from app.services.web_resolver import resolve_web_link as fetch_web_link
 
 
 def stream_agent_response(user: User, thread: ChatThread, prompt: str) -> Generator[dict, None, None]:
     settings = user.settings.merged()
+    messages = _conversation_messages(user, thread, prompt)
     if not current_app.config.get("OPENAI_API_KEY"):
-        yield from _stream_demo_response(user, thread, prompt, settings)
+        yield from _stream_demo_response(user, thread, prompt, settings, messages)
         return
 
     try:
-        yield from _stream_langgraph_response(user, thread, prompt, settings)
+        yield from _stream_langgraph_response(user, thread, messages, settings)
     except ImportError as exc:
         yield {"type": "status", "text": "LangGraph dependencies are unavailable."}
         yield {"type": "token", "text": f"LangGraph is not installed: `{exc}`"}
 
 
 def _stream_langgraph_response(
-    user: User, thread: ChatThread, prompt: str, settings: dict
+    user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
 ) -> Generator[dict, None, None]:
     from langchain.agents import create_agent
     from langchain.messages import AIMessageChunk
@@ -51,7 +56,7 @@ def _stream_langgraph_response(
 
     yield {"type": "status", "text": "Thinking"}
     for chunk in agent.stream(
-        {"messages": [{"role": "user", "content": prompt}]},
+        {"messages": messages},
         stream_mode=["messages", "updates"],
         version="v2",
         config={"configurable": {"thread_id": thread.id}},
@@ -69,6 +74,33 @@ def _stream_langgraph_response(
                     yield {"type": "token", "text": block["text"]}
         elif chunk["type"] == "updates":
             yield {"type": "status", "text": "Updated agent state"}
+
+
+def _conversation_messages(user: User, thread: ChatThread, prompt: str) -> list[dict[str, str]]:
+    limit = max(1, int(current_app.config.get("CONVERSATION_HISTORY_LIMIT", 24)))
+    rows = (
+        ChatMessage.query.filter(
+            ChatMessage.thread_id == thread.id,
+            ChatMessage.user_id == user.id,
+            ChatMessage.role.in_(("user", "assistant")),
+        )
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .all()
+    )
+    rows.reverse()
+    snapshot = summarize_overflowing_conversation(user, thread, rows, keep_count=limit)
+    recent_rows = rows[-limit:]
+    messages = [
+        {"role": row.role, "content": row.content}
+        for row in recent_rows
+        if row.content and row.role in {"user", "assistant"}
+    ]
+    context_message = snapshot_context_message(snapshot)
+    if context_message:
+        messages.insert(0, context_message)
+    if not messages or messages[-1]["role"] != "user" or messages[-1]["content"] != prompt:
+        messages.append({"role": "user", "content": prompt})
+    return messages
 
 
 def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[Any]:
@@ -117,7 +149,11 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
 
 
 def _stream_demo_response(
-    user: User, thread: ChatThread, prompt: str, settings: dict
+    user: User,
+    thread: ChatThread,
+    prompt: str,
+    settings: dict,
+    messages: list[dict[str, str]],
 ) -> Generator[dict, None, None]:
     yield {"type": "status", "text": "Demo mode: set OPENAI_API_KEY to use LangGraph with OpenAI."}
     if settings.get("reasoning_summaries_enabled"):
@@ -125,8 +161,15 @@ def _stream_demo_response(
             "type": "reasoning_summary",
             "text": "No API key is configured, so this local demo response validates streaming only.",
         }
+    previous_messages = messages[:-1]
+    context_note = ""
+    if previous_messages:
+        recent = previous_messages[-4:]
+        context_lines = [f"- {message['role']}: {message['content'][:240]}" for message in recent]
+        context_note = "Recent Postgres conversation context:\n\n" + "\n".join(context_lines) + "\n\n"
     text = (
         "I am running in **local demo mode** because no OpenAI API key is configured.\n\n"
+        f"{context_note}"
         "Your message was:\n\n"
         f"> {prompt}\n\n"
         "Once `OPENAI_API_KEY` and Postgres are configured, this endpoint streams LangGraph "
@@ -163,6 +206,9 @@ def _system_prompt(settings: dict[str, Any]) -> str:
         "when a search result needs to be opened to answer the user's specific question. "
         "Use recall_user_memory as a RAG retriever over approved long-term memories "
         "when user-specific remembered context would help. "
+        "Use the rolling conversation summary plus prior messages in this thread as "
+        "short-term conversation memory; if the user refers to something earlier in the "
+        "same chat, answer from that context. "
         "Use propose_memory only for stable user preferences or facts worth remembering, "
         "and understand that the user must approve every proposed memory before it persists. "
         f"User settings: compact_mode={settings.get('compact_mode')}, "

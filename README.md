@@ -20,6 +20,7 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    OPENAI_API_KEY=...
    MEMORY_EMBEDDING_MODEL=text-embedding-3-small
    MEMORY_EMBEDDING_DIMENSIONS=1536
+   CONVERSATION_HISTORY_LIMIT=24
    ```
 
 4. Run migrations:
@@ -37,6 +38,8 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
 If `OPENAI_API_KEY` is empty, chat uses local demo streaming so the UI and auth flow can be tested without model calls.
 
 ## Memory
+
+Short-term conversation memory is stored in Postgres as chat messages and replayed into each agent call for the active thread. `CONVERSATION_HISTORY_LIMIT` controls how many recent turns are sent back verbatim. When a thread exceeds that limit, older turns are compacted into rolling `conversation_memory_snapshots` summaries and prepended to the agent context.
 
 Long-term memory is deliberately user-approved. The agent can create pending proposals with `propose_memory`, but approved memories are embedded and stored in Postgres with pgvector. The `recall_user_memory` tool retrieves approved memories as a small RAG pipeline scoped to the current user.
 

@@ -20,6 +20,7 @@ class Config:
     DEFAULT_REASONING_EFFORT = os.getenv("DEFAULT_REASONING_EFFORT", "medium")
     MEMORY_EMBEDDING_MODEL = os.getenv("MEMORY_EMBEDDING_MODEL", "text-embedding-3-small")
     MEMORY_EMBEDDING_DIMENSIONS = int(os.getenv("MEMORY_EMBEDDING_DIMENSIONS", "1536"))
+    CONVERSATION_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "24"))
     LANGGRAPH_DATABASE_URL = os.getenv(
         "LANGGRAPH_DATABASE_URL",
         "postgresql://postgres:postgres@localhost:5432/langgraph_chat?sslmode=disable",
