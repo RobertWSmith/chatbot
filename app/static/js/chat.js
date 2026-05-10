@@ -33,7 +33,8 @@ function balanceMarkdown(source) {
 function appendMessage(role, text = "") {
   const article = document.createElement("article");
   article.className = `message ${role}`;
-  article.innerHTML = `<div class="message-role">${role}</div><div class="markdown"></div>`;
+  const label = role === "user" ? "You" : "Assistant";
+  article.innerHTML = `<div class="message-role">${label}</div><div class="markdown"></div>`;
   const markdown = article.querySelector(".markdown");
   markdown.dataset.source = text;
   renderMarkdown(markdown, text);
@@ -79,48 +80,82 @@ document.querySelectorAll("[data-markdown-source]").forEach((node) => {
 
 const form = document.querySelector("#chat-form");
 if (form) {
+  const input = document.querySelector("#message-input");
+  const submitButton = form.querySelector("button[type='submit']");
+
+  function resizeComposer() {
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
+  }
+
+  function setStreaming(isStreaming) {
+    input.disabled = isStreaming;
+    submitButton.disabled = isStreaming;
+    submitButton.textContent = isStreaming ? "Sending" : "Send";
+    form.classList.toggle("is-streaming", isStreaming);
+  }
+
+  input.addEventListener("input", resizeComposer);
+  input.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      if (!submitButton.disabled) {
+        form.requestSubmit();
+      }
+    }
+  });
+  resizeComposer();
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const pane = document.querySelector(".chat-pane");
-    const input = document.querySelector("#message-input");
     const status = document.querySelector("#stream-status");
     const message = input.value.trim();
     if (!message) return;
     input.value = "";
+    resizeComposer();
     appendMessage("user", message);
     const assistant = appendMessage("assistant", "");
     let assistantSource = "";
     let reasoningSource = "";
     status.textContent = "Starting";
+    setStreaming(true);
 
-    const response = await fetch(`/api/chat/threads/${pane.dataset.threadId}/messages`, {
-      method: "POST",
-      headers: window.chatApp.jsonHeaders(),
-      body: JSON.stringify({ message }),
-    });
-    if (!response.ok) {
-      status.textContent = "Message failed to send.";
-      return;
-    }
-
-    await readSse(response, (eventName, payload) => {
-      if (eventName === "token") {
-        assistantSource += payload.text || "";
-        renderMarkdown(assistant.markdown, assistantSource);
-      } else if (eventName === "reasoning_summary") {
-        reasoningSource += payload.text || "";
-        renderMarkdown(ensureReasoning(assistant.article), reasoningSource);
-      } else if (eventName === "status") {
-        status.textContent = payload.text || "";
-      } else if (eventName === "memory_proposal") {
-        status.textContent = "Memory proposal created. Review it on the Memory page.";
-      } else if (eventName === "error") {
-        status.textContent = payload.message || "Stream failed.";
-      } else if (eventName === "done") {
-        status.textContent = "Done";
+    try {
+      const response = await fetch(`/api/chat/threads/${pane.dataset.threadId}/messages`, {
+        method: "POST",
+        headers: window.chatApp.jsonHeaders(),
+        body: JSON.stringify({ message }),
+      });
+      if (!response.ok) {
+        status.textContent = "Message failed to send.";
+        return;
       }
-      assistant.article.scrollIntoView({ block: "end" });
-    });
+
+      await readSse(response, (eventName, payload) => {
+        if (eventName === "token") {
+          assistantSource += payload.text || "";
+          renderMarkdown(assistant.markdown, assistantSource);
+        } else if (eventName === "reasoning_summary") {
+          reasoningSource += payload.text || "";
+          renderMarkdown(ensureReasoning(assistant.article), reasoningSource);
+        } else if (eventName === "status") {
+          status.textContent = payload.text || "";
+        } else if (eventName === "memory_proposal") {
+          status.textContent = "Memory proposal created. Review it on the Memory page.";
+        } else if (eventName === "error") {
+          status.textContent = payload.message || "Stream failed.";
+        } else if (eventName === "done") {
+          status.textContent = "Done";
+        }
+        assistant.article.scrollIntoView({ block: "end" });
+      });
+    } catch {
+      status.textContent = "Message failed to send.";
+    } finally {
+      setStreaming(false);
+      input.focus();
+    }
   });
 }
 

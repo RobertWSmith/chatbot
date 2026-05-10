@@ -6,7 +6,7 @@ from flask import Blueprint, Response, jsonify, render_template, request, stream
 from flask_login import current_user, login_required
 
 from app.extensions import db
-from app.models import ChatMessage, ChatThread
+from app.models import ChatMessage, ChatThread, MessageTelemetry, utcnow
 from app.services.agent import stream_agent_response
 
 bp = Blueprint("chat", __name__)
@@ -37,6 +37,7 @@ def create_thread():
 @bp.post("/api/chat/threads/<thread_id>/messages")
 @login_required
 def send_message(thread_id: str):
+    request_received_at = utcnow()
     thread = _get_thread_or_404(thread_id)
     payload = request.get_json(silent=True) or {}
     prompt = (payload.get("message") or "").strip()
@@ -52,14 +53,32 @@ def send_message(thread_id: str):
     db.session.add(user_message)
     if thread.title == "New chat":
         thread.title = prompt[:80]
+    db.session.flush()
+    db.session.add(
+        MessageTelemetry(
+            message_id=user_message.id,
+            user_id=current_user.id,
+            thread_id=thread.id,
+            role=user_message.role,
+            request_received_at=request_received_at,
+            message_persisted_at=utcnow(),
+            completed_at=utcnow(),
+        )
+    )
     db.session.commit()
 
     def generate():
         assistant_text: list[str] = []
         reasoning_text: list[str] = []
+        generation_started_at = utcnow()
+        first_token_at = None
+        token_count = 0
         try:
             for event in stream_agent_response(current_user, thread, prompt):
                 if event["type"] == "token":
+                    token_count += 1
+                    if first_token_at is None:
+                        first_token_at = utcnow()
                     assistant_text.append(event["text"])
                 elif event["type"] == "reasoning_summary":
                     reasoning_text.append(event["text"])
@@ -73,6 +92,21 @@ def send_message(thread_id: str):
                 reasoning_summary="".join(reasoning_text).strip() or None,
             )
             db.session.add(assistant_message)
+            db.session.flush()
+            db.session.add(
+                MessageTelemetry(
+                    message_id=assistant_message.id,
+                    user_id=current_user.id,
+                    thread_id=thread.id,
+                    role=assistant_message.role,
+                    request_received_at=request_received_at,
+                    message_persisted_at=utcnow(),
+                    generation_started_at=generation_started_at,
+                    first_token_at=first_token_at,
+                    completed_at=utcnow(),
+                    token_count=token_count,
+                )
+            )
             db.session.commit()
             yield _sse(
                 "done",

@@ -2,7 +2,10 @@
 {% block title %}Settings{% endblock %}
 {% block content %}
 <section class="settings-page">
-  <h1>Settings</h1>
+  <div class="mb-6">
+    <h1>Settings</h1>
+    <p class="max-w-2xl text-sm text-slate-600 dark:text-slate-300">Tune model behavior, Markdown rendering, memory tools, and privacy defaults for this account.</p>
+  </div>
   <form id="settings-form" class="settings-grid">
     <label>Model
       <select name="model_name">
@@ -46,7 +49,7 @@
     <label class="check"><input type="checkbox" name="markdown_options.syntax_highlighting" {% if settings.markdown_options.syntax_highlighting %}checked{% endif %}> <span>Syntax highlighting</span></label>
     <label class="check"><input type="checkbox" name="privacy.save_chat_history" {% if settings.privacy.save_chat_history %}checked{% endif %}> <span>Save chat history</span></label>
     <label class="check"><input type="checkbox" name="privacy.allow_memory_proposals" {% if settings.privacy.allow_memory_proposals %}checked{% endif %}> <span>Allow memory proposals</span></label>
-    <button class="primary" type="submit">Save settings</button>
+    <button class="primary sm:col-span-2" type="submit">Save settings</button>
   </form>
   <p id="settings-status" class="stream-status" aria-live="polite"></p>
 </section>

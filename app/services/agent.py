@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Generator
 from typing import Any
@@ -14,7 +13,7 @@ from app.models import ChatThread, PendingMemory, User
 
 def stream_agent_response(user: User, thread: ChatThread, prompt: str) -> Generator[dict, None, None]:
     settings = user.settings.merged()
-    if not os.getenv("OPENAI_API_KEY") and not current_app.config.get("OPENAI_API_KEY"):
+    if not current_app.config.get("OPENAI_API_KEY"):
         yield from _stream_demo_response(user, thread, prompt, settings)
         return
 

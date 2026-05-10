@@ -6,3 +6,4 @@ __pycache__/
 instance/
 .coverage
 htmlcov/
+.idea

@@ -4,9 +4,9 @@
 {% block content %}
 <section class="auth-panel">
   <h1>Delete account</h1>
+  <p class="mb-6 text-sm text-slate-600 dark:text-slate-300">This permanently removes your chats, settings, and pending memories.</p>
   <form method="post" class="stack">
     {{ form.hidden_tag() }}
-    <p>Type your email address to confirm account deletion.</p>
     <label>Email {{ form.email() }}{{ field_errors(form.email) }}</label>
     {{ form.submit(class_="danger") }}
   </form>

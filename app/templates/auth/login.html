@@ -4,6 +4,7 @@
 {% block content %}
 <section class="auth-panel">
   <h1>Log in</h1>
+  <p class="mb-6 text-sm text-slate-600 dark:text-slate-300">Pick up your conversations, settings, and memory review queue.</p>
   <form method="post" class="stack">
     {{ form.hidden_tag() }}
     <label>Email {{ form.email(autocomplete="email") }}{{ field_errors(form.email) }}</label>
@@ -11,6 +12,6 @@
     <label class="check">{{ form.remember() }} <span>Remember me</span></label>
     {{ form.submit(class_="primary") }}
   </form>
-  <p><a href="{{ url_for('auth.forgot_password') }}">Forgot password?</a></p>
+  <p class="mt-5 text-sm"><a href="{{ url_for('auth.forgot_password') }}">Forgot password?</a></p>
 </section>
 {% endblock %}

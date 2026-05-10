@@ -4,6 +4,7 @@
 {% block content %}
 <section class="auth-panel">
   <h1>Create account</h1>
+  <p class="mb-6 text-sm text-slate-600 dark:text-slate-300">Start with private chat history, settings, and user-approved memory.</p>
   <form method="post" class="stack">
     {{ form.hidden_tag() }}
     <label>Email {{ form.email(autocomplete="email") }}{{ field_errors(form.email) }}</label>
