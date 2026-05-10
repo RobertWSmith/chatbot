@@ -10,7 +10,10 @@ gunicorn==23.0.0
 python-dotenv==1.0.1
 psycopg[binary,pool]==3.3.4
 langchain==1.2.15
+langchain-community==0.4.1
 langchain-openai==1.1.12
 langgraph==1.1.10
 langgraph-checkpoint-postgres==3.0.5
+duckduckgo-search==8.1.1
+ddgs==9.14.2
 pytest==8.3.3

@@ -29,8 +29,50 @@ def _stream_langgraph_response(
 ) -> Generator[dict, None, None]:
     from langchain.agents import create_agent
     from langchain.messages import AIMessageChunk
-    from langchain.tools import tool
     from langchain_openai import ChatOpenAI
+
+    model = ChatOpenAI(
+        model=settings["model_name"],
+        api_key=current_app.config.get("OPENAI_API_KEY") or None,
+        model_kwargs={
+            "reasoning": {
+                "effort": settings["reasoning_effort"],
+                "summary": "auto" if settings.get("reasoning_summaries_enabled") else None,
+            }
+        },
+    )
+    agent = create_agent(
+        model=model,
+        tools=_build_agent_tools(user, thread, settings),
+        store=None,
+        system_prompt=_system_prompt(settings),
+    )
+
+    yield {"type": "status", "text": "Thinking"}
+    for chunk in agent.stream(
+        {"messages": [{"role": "user", "content": prompt}]},
+        stream_mode=["messages", "updates"],
+        version="v2",
+        config={"configurable": {"thread_id": thread.id}},
+    ):
+        if chunk["type"] == "messages":
+            message_chunk, _metadata = chunk["data"]
+            if not isinstance(message_chunk, AIMessageChunk):
+                continue
+            for block in message_chunk.content_blocks:
+                if block["type"] == "reasoning" and settings.get("reasoning_summaries_enabled"):
+                    text = block.get("reasoning") or block.get("summary") or ""
+                    if text:
+                        yield {"type": "reasoning_summary", "text": text}
+                elif block["type"] == "text" and block.get("text"):
+                    yield {"type": "token", "text": block["text"]}
+        elif chunk["type"] == "updates":
+            yield {"type": "status", "text": "Updated agent state"}
+
+
+def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[Any]:
+    from langchain.tools import tool
+    from langchain_community.tools import DuckDuckGoSearchRun
 
     @tool
     def recall_user_memory(query: str) -> str:
@@ -63,43 +105,15 @@ def _stream_langgraph_response(
         db.session.commit()
         return f"Created memory proposal {proposal.id} for user review."
 
-    model = ChatOpenAI(
-        model=settings["model_name"],
-        api_key=current_app.config.get("OPENAI_API_KEY") or None,
-        model_kwargs={
-            "reasoning": {
-                "effort": settings["reasoning_effort"],
-                "summary": "auto" if settings.get("reasoning_summaries_enabled") else None,
-            }
-        },
+    web_search = DuckDuckGoSearchRun(
+        name="web_search",
+        description=(
+            "Search DuckDuckGo for current or external web information. "
+            "Use this when the user asks about recent events, facts that may have changed, "
+            "or topics that require sources outside this chatbot's conversation history."
+        ),
     )
-    agent = create_agent(
-        model=model,
-        tools=[recall_user_memory, propose_memory],
-        store=None,
-        system_prompt=_system_prompt(settings),
-    )
-
-    yield {"type": "status", "text": "Thinking"}
-    for chunk in agent.stream(
-        {"messages": [{"role": "user", "content": prompt}]},
-        stream_mode=["messages", "updates"],
-        version="v2",
-        config={"configurable": {"thread_id": thread.id}},
-    ):
-        if chunk["type"] == "messages":
-            message_chunk, _metadata = chunk["data"]
-            if not isinstance(message_chunk, AIMessageChunk):
-                continue
-            for block in message_chunk.content_blocks:
-                if block["type"] == "reasoning" and settings.get("reasoning_summaries_enabled"):
-                    text = block.get("reasoning") or block.get("summary") or ""
-                    if text:
-                        yield {"type": "reasoning_summary", "text": text}
-                elif block["type"] == "text" and block.get("text"):
-                    yield {"type": "token", "text": block["text"]}
-        elif chunk["type"] == "updates":
-            yield {"type": "status", "text": "Updated agent state"}
+    return [recall_user_memory, propose_memory, web_search]
 
 
 def _stream_demo_response(
@@ -143,6 +157,9 @@ def _stream_demo_response(
 def _system_prompt(settings: dict[str, Any]) -> str:
     return (
         "You are a helpful chatbot. Respond in clean GitHub-flavored Markdown. "
+        "Use web_search for current events, recently changed facts, or external information "
+        "that is not available from the conversation. Summarize search results plainly and "
+        "include source links when the tool returns them. "
         "Use recall_user_memory only when user-specific remembered context would help. "
         "Use propose_memory only for stable user preferences or facts worth remembering, "
         "and understand that the user must approve every proposed memory before it persists. "
