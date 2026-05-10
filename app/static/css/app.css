@@ -248,6 +248,13 @@ button,
   width: auto;
 }
 
+.field-error {
+  display: block;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 14px;
+}
+
 .memory-list {
   display: grid;
   gap: 14px;

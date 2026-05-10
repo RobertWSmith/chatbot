@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "auth/_form_errors.html" import field_errors %}
 {% block title %}Delete account{% endblock %}
 {% block content %}
 <section class="auth-panel">
@@ -6,7 +7,7 @@
   <form method="post" class="stack">
     {{ form.hidden_tag() }}
     <p>Type your email address to confirm account deletion.</p>
-    <label>Email {{ form.email() }}</label>
+    <label>Email {{ form.email() }}{{ field_errors(form.email) }}</label>
     {{ form.submit(class_="danger") }}
   </form>
 </section>

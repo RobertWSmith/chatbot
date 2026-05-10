@@ -1,13 +1,14 @@
 {% extends "base.html" %}
+{% from "auth/_form_errors.html" import field_errors %}
 {% block title %}Register{% endblock %}
 {% block content %}
 <section class="auth-panel">
   <h1>Create account</h1>
   <form method="post" class="stack">
     {{ form.hidden_tag() }}
-    <label>Email {{ form.email(autocomplete="email") }}</label>
-    <label>Password {{ form.password(autocomplete="new-password") }}</label>
-    <label>Confirm password {{ form.confirm_password(autocomplete="new-password") }}</label>
+    <label>Email {{ form.email(autocomplete="email") }}{{ field_errors(form.email) }}</label>
+    <label>Password {{ form.password(autocomplete="new-password") }}{{ field_errors(form.password) }}</label>
+    <label>Confirm password {{ form.confirm_password(autocomplete="new-password") }}{{ field_errors(form.confirm_password) }}</label>
     {{ form.submit(class_="primary") }}
   </form>
 </section>

@@ -8,7 +8,7 @@ from flask_login import UserMixin
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .extensions import db
-from .security import hash_password, verify_password
+from .security import hash_password, password_needs_rehash, verify_password
 
 
 def utcnow() -> datetime:
@@ -61,6 +61,9 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password: str) -> bool:
         return verify_password(self.password_hash, password)
+
+    def password_needs_rehash(self) -> bool:
+        return password_needs_rehash(self.password_hash)
 
     def make_token(self, purpose: str) -> str:
         serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"])

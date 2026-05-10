@@ -20,6 +20,11 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data.lower().strip()).first()
         if user and user.check_password(form.password.data):
+            if user.settings is None:
+                user.settings = UserSettings()
+            if user.password_needs_rehash():
+                user.set_password(form.password.data)
+            db.session.commit()
             login_user(user, remember=form.remember.data)
             return redirect(request.args.get("next") or url_for("chat.chat_home"))
         flash("Invalid email or password.", "error")

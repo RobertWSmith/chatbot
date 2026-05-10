@@ -1,12 +1,13 @@
 {% extends "base.html" %}
+{% from "auth/_form_errors.html" import field_errors %}
 {% block title %}Log in{% endblock %}
 {% block content %}
 <section class="auth-panel">
   <h1>Log in</h1>
   <form method="post" class="stack">
     {{ form.hidden_tag() }}
-    <label>Email {{ form.email(autocomplete="email") }}</label>
-    <label>Password {{ form.password(autocomplete="current-password") }}</label>
+    <label>Email {{ form.email(autocomplete="email") }}{{ field_errors(form.email) }}</label>
+    <label>Password {{ form.password(autocomplete="current-password") }}{{ field_errors(form.password) }}</label>
     <label class="check">{{ form.remember() }} <span>Remember me</span></label>
     {{ form.submit(class_="primary") }}
   </form>
