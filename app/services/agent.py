@@ -9,6 +9,7 @@ from flask import current_app
 from app.extensions import db
 from app.memory.store import open_memory_store, user_memory_namespace
 from app.models import ChatThread, PendingMemory, User
+from app.services.web_resolver import resolve_web_link as fetch_web_link
 
 
 def stream_agent_response(user: User, thread: ChatThread, prompt: str) -> Generator[dict, None, None]:
@@ -105,6 +106,11 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
         db.session.commit()
         return f"Created memory proposal {proposal.id} for user review."
 
+    @tool
+    def resolve_web_link(url: str, question: str = "") -> str:
+        """Fetch a public web result URL and extract readable content relevant to the question."""
+        return fetch_web_link(url, question)
+
     web_search = DuckDuckGoSearchRun(
         name="web_search",
         description=(
@@ -113,7 +119,7 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
             "or topics that require sources outside this chatbot's conversation history."
         ),
     )
-    return [recall_user_memory, propose_memory, web_search]
+    return [recall_user_memory, propose_memory, web_search, resolve_web_link]
 
 
 def _stream_demo_response(
@@ -159,7 +165,8 @@ def _system_prompt(settings: dict[str, Any]) -> str:
         "You are a helpful chatbot. Respond in clean GitHub-flavored Markdown. "
         "Use web_search for current events, recently changed facts, or external information "
         "that is not available from the conversation. Summarize search results plainly and "
-        "include source links when the tool returns them. "
+        "include source links when the tool returns them. Use resolve_web_link after web_search "
+        "when a search result needs to be opened to answer the user's specific question. "
         "Use recall_user_memory only when user-specific remembered context would help. "
         "Use propose_memory only for stable user preferences or facts worth remembering, "
         "and understand that the user must approve every proposed memory before it persists. "
