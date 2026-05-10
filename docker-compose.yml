@@ -1,0 +1,38 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      DATABASE_URL: postgresql+psycopg://langgraph:langgraph@db:5432/langgraph_chat
+      LANGGRAPH_DATABASE_URL: postgresql://langgraph:langgraph@db:5432/langgraph_chat?sslmode=disable
+      LANGGRAPH_SETUP_SCHEMA: "1"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-gpt-5.5}
+      DEFAULT_REASONING_EFFORT: ${DEFAULT_REASONING_EFFORT:-medium}
+      FLASK_DEBUG: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: langgraph_chat
+      POSTGRES_USER: langgraph
+      POSTGRES_PASSWORD: langgraph
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langgraph -d langgraph_chat"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Delete account{% endblock %}
+{% block content %}
+<section class="auth-panel">
+  <h1>Delete account</h1>
+  <form method="post" class="stack">
+    {{ form.hidden_tag() }}
+    <p>Type your email address to confirm account deletion.</p>
+    <label>Email {{ form.email() }}</label>
+    {{ form.submit(class_="danger") }}
+  </form>
+</section>
+{% endblock %}

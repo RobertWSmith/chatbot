@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Memory{% endblock %}
+{% block content %}
+<section class="memory-page">
+  <h1>Memory</h1>
+  <div class="memory-list">
+    {% for memory in memories %}
+      <article class="memory-item" data-memory-id="{{ memory.id }}">
+        <header>
+          <strong>{{ memory.category }}</strong>
+          <span class="pill {{ memory.status }}">{{ memory.status }}</span>
+        </header>
+        <p>{{ memory.memory_text }}</p>
+        <small>Confidence {{ "%.0f"|format(memory.confidence * 100) }}%</small>
+        {% if memory.status == "pending" %}
+          <div class="actions">
+            <button class="secondary memory-approve" type="button">Approve</button>
+            <button class="danger memory-reject" type="button">Reject</button>
+          </div>
+        {% endif %}
+      </article>
+    {% else %}
+      <p>No memory proposals yet.</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/memory.js') }}"></script>
+{% endblock %}

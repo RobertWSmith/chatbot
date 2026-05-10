@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Chat{% endblock %}
+{% block shell_class %}chat-shell{% endblock %}
+{% block content %}
+<aside class="thread-list">
+  <button class="secondary" id="new-thread">New chat</button>
+  {% for thread in threads %}
+    <a class="thread-link {% if thread.id == selected_thread.id %}active{% endif %}" href="{{ url_for('chat.chat_thread', thread_id=thread.id) }}">
+      {{ thread.title }}
+    </a>
+  {% endfor %}
+</aside>
+<section class="chat-pane" data-thread-id="{{ selected_thread.id }}">
+  <div id="messages" class="messages">
+    {% for message in selected_thread.messages %}
+      <article class="message {{ message.role }}">
+        <div class="message-role">{{ message.role }}</div>
+        {% if message.reasoning_summary %}
+          <details class="reasoning" open>
+            <summary>Reasoning summary</summary>
+            <div class="markdown">{{ message.reasoning_summary }}</div>
+          </details>
+        {% endif %}
+        <div class="markdown" data-markdown-source="{{ message.content | e }}">{{ message.content }}</div>
+      </article>
+    {% endfor %}
+  </div>
+  <div id="stream-status" class="stream-status" aria-live="polite"></div>
+  <form id="chat-form" class="composer">
+    <textarea id="message-input" name="message" rows="3" placeholder="Ask anything..." required></textarea>
+    <button class="primary" type="submit">Send</button>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}

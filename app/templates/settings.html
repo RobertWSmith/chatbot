@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<section class="settings-page">
+  <h1>Settings</h1>
+  <form id="settings-form" class="settings-grid">
+    <label>Model
+      <select name="model_name">
+        {% for model in ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5-nano"] %}
+          <option value="{{ model }}" {% if settings.model_name == model %}selected{% endif %}>{{ model }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Reasoning effort
+      <select name="reasoning_effort">
+        {% for effort in ["minimal", "low", "medium", "high", "xhigh"] %}
+          <option value="{{ effort }}" {% if settings.reasoning_effort == effort %}selected{% endif %}>{{ effort }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Theme
+      <select name="theme">
+        {% for theme in ["system", "light", "dark"] %}
+          <option value="{{ theme }}" {% if settings.theme == theme %}selected{% endif %}>{{ theme }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Font size
+      <select name="font_size">
+        {% for size in ["small", "medium", "large"] %}
+          <option value="{{ size }}" {% if settings.font_size == size %}selected{% endif %}>{{ size }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Streaming speed
+      <select name="streaming_speed">
+        {% for speed in ["slow", "normal", "fast"] %}
+          <option value="{{ speed }}" {% if settings.streaming_speed == speed %}selected{% endif %}>{{ speed }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" name="reasoning_summaries_enabled" {% if settings.reasoning_summaries_enabled %}checked{% endif %}> <span>Show reasoning summaries</span></label>
+    <label class="check"><input type="checkbox" name="memory_enabled" {% if settings.memory_enabled %}checked{% endif %}> <span>Enable memory tools</span></label>
+    <label class="check"><input type="checkbox" name="compact_mode" {% if settings.compact_mode %}checked{% endif %}> <span>Compact mode</span></label>
+    <label class="check"><input type="checkbox" name="markdown_options.gfm" {% if settings.markdown_options.gfm %}checked{% endif %}> <span>GitHub-flavored Markdown</span></label>
+    <label class="check"><input type="checkbox" name="markdown_options.syntax_highlighting" {% if settings.markdown_options.syntax_highlighting %}checked{% endif %}> <span>Syntax highlighting</span></label>
+    <label class="check"><input type="checkbox" name="privacy.save_chat_history" {% if settings.privacy.save_chat_history %}checked{% endif %}> <span>Save chat history</span></label>
+    <label class="check"><input type="checkbox" name="privacy.allow_memory_proposals" {% if settings.privacy.allow_memory_proposals %}checked{% endif %}> <span>Allow memory proposals</span></label>
+    <button class="primary" type="submit">Save settings</button>
+  </form>
+  <p id="settings-status" class="stream-status" aria-live="polite"></p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}
