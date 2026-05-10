@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from flask import current_app
 from flask_login import UserMixin
+from pgvector.sqlalchemy import Vector
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .extensions import db
@@ -62,6 +63,11 @@ class User(UserMixin, db.Model):
     )
     conversation_memories = db.relationship(
         "ConversationMemory",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    long_term_memories = db.relationship(
+        "LongTermMemory",
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -330,3 +336,42 @@ class PendingMemory(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     user = db.relationship("User")
+    long_term_memory = db.relationship(
+        "LongTermMemory",
+        back_populates="source_proposal",
+        uselist=False,
+    )
+
+
+class LongTermMemory(db.Model):
+    __tablename__ = "long_term_memories"
+    __table_args__ = (
+        db.CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_long_term_memories_confidence",
+        ),
+        db.Index("ix_long_term_memories_user_category", "user_id", "category"),
+        db.Index("ix_long_term_memories_source_pending", "source_pending_memory_id"),
+    )
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    source_pending_memory_id = db.Column(
+        db.String(36),
+        db.ForeignKey("pending_memories.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
+    text = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(80), nullable=False, default="preference")
+    confidence = db.Column(db.Float, nullable=False, default=0.5)
+    embedding_model = db.Column(db.String(120), nullable=False)
+    embedding = db.Column(Vector(1536), nullable=False)
+    memory_metadata = db.Column(db.JSON, nullable=False, default=dict)
+    last_retrieved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    retrieval_count = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    user = db.relationship("User", back_populates="long_term_memories")
+    source_proposal = db.relationship("PendingMemory", back_populates="long_term_memory")

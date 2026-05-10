@@ -18,6 +18,8 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    DATABASE_URL=postgresql+psycopg://...
    LANGGRAPH_DATABASE_URL=postgresql://...
    OPENAI_API_KEY=...
+   MEMORY_EMBEDDING_MODEL=text-embedding-3-small
+   MEMORY_EMBEDDING_DIMENSIONS=1536
    ```
 
 4. Run migrations:
@@ -36,7 +38,9 @@ If `OPENAI_API_KEY` is empty, chat uses local demo streaming so the UI and auth 
 
 ## Memory
 
-Long-term memory is deliberately user-approved. The agent can create pending proposals with `propose_memory`, but the memory is only written to the LangGraph store after approval from `/memory`.
+Long-term memory is deliberately user-approved. The agent can create pending proposals with `propose_memory`, but approved memories are embedded and stored in Postgres with pgvector. The `recall_user_memory` tool retrieves approved memories as a small RAG pipeline scoped to the current user.
+
+The Docker Compose database uses `pgvector/pgvector:0.8.2-pg17`, and migrations create the `vector` extension plus the `long_term_memories` table.
 
 ## Reasoning
 

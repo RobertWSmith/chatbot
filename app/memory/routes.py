@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import uuid
-
 from flask import Blueprint, jsonify, render_template
 from flask_login import current_user, login_required
 
 from app.extensions import db
-from app.models import PendingMemory
-
-from .store import open_memory_store, user_memory_namespace
+from app.models import LongTermMemory, PendingMemory
+from app.services.rag_memory import approve_memory_to_rag
 
 bp = Blueprint("memory", __name__)
 
@@ -18,8 +15,11 @@ bp = Blueprint("memory", __name__)
 def memory_page():
     memories = PendingMemory.query.filter_by(user_id=current_user.id).order_by(
         PendingMemory.created_at.desc()
-    )
-    return render_template("memory.html", memories=memories)
+    ).all()
+    approved_memories = LongTermMemory.query.filter_by(user_id=current_user.id).order_by(
+        LongTermMemory.created_at.desc()
+    ).all()
+    return render_template("memory.html", memories=memories, approved_memories=approved_memories)
 
 
 @bp.get("/api/memories")
@@ -38,18 +38,9 @@ def approve_memory(memory_id: str):
     if memory.status != "pending":
         return jsonify({"error": "Only pending memories can be approved."}), 409
     memory.status = "approved"
-    memory.approved_memory_key = str(uuid.uuid4())
-    with open_memory_store() as store:
-        if store is not None:
-            store.put(
-                user_memory_namespace(current_user.id),
-                memory.approved_memory_key,
-                {
-                    "text": memory.memory_text,
-                    "category": memory.category,
-                    "confidence": memory.confidence,
-                },
-            )
+    long_term_memory = approve_memory_to_rag(memory)
+    db.session.flush()
+    memory.approved_memory_key = long_term_memory.id
     db.session.commit()
     return jsonify({"memory": _serialize_memory(memory)})
 

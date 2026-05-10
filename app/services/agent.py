@@ -7,8 +7,8 @@ from typing import Any
 from flask import current_app
 
 from app.extensions import db
-from app.memory.store import open_memory_store, user_memory_namespace
 from app.models import ChatThread, PendingMemory, User
+from app.services.rag_memory import format_memory_search_results, search_long_term_memories
 from app.services.web_resolver import resolve_web_link as fetch_web_link
 
 
@@ -77,16 +77,10 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
 
     @tool
     def recall_user_memory(query: str) -> str:
-        """Search approved long-term memories for the current user."""
+        """Retrieve approved long-term memories with vector similarity search."""
         if not settings.get("memory_enabled", True):
             return "Memory is disabled for this user."
-        with open_memory_store() as store:
-            if store is None:
-                return "Memory store is not configured."
-            items = store.search(user_memory_namespace(user.id), query=query, limit=5)
-        if not items:
-            return "No relevant memories found."
-        return "\n".join(item.value.get("text", "") for item in items)
+        return format_memory_search_results(search_long_term_memories(user.id, query, limit=5))
 
     @tool
     def propose_memory(memory_text: str, category: str = "preference", confidence: float = 0.5) -> str:
@@ -167,7 +161,8 @@ def _system_prompt(settings: dict[str, Any]) -> str:
         "that is not available from the conversation. Summarize search results plainly and "
         "include source links when the tool returns them. Use resolve_web_link after web_search "
         "when a search result needs to be opened to answer the user's specific question. "
-        "Use recall_user_memory only when user-specific remembered context would help. "
+        "Use recall_user_memory as a RAG retriever over approved long-term memories "
+        "when user-specific remembered context would help. "
         "Use propose_memory only for stable user preferences or facts worth remembering, "
         "and understand that the user must approve every proposed memory before it persists. "
         f"User settings: compact_mode={settings.get('compact_mode')}, "
