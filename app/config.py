@@ -16,6 +16,8 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WTF_CSRF_TIME_LIMIT = None
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    CHAT_MODEL_PROVIDER = os.getenv("CHAT_MODEL_PROVIDER", "openai")
+    CUSTOM_REASONING_GRAPH_ENABLED = os.getenv("CUSTOM_REASONING_GRAPH_ENABLED", "0") == "1"
     DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.5")
     DEFAULT_REASONING_EFFORT = os.getenv("DEFAULT_REASONING_EFFORT", "medium")
     MEMORY_EMBEDDING_MODEL = os.getenv("MEMORY_EMBEDDING_MODEL", "text-embedding-3-small")
