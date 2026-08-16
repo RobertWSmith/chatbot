@@ -11,6 +11,7 @@ services:
       LANGGRAPH_DATABASE_URL: postgresql://langgraph:langgraph@db:5432/langgraph_chat?sslmode=disable
       LANGGRAPH_SETUP_SCHEMA: "1"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CUSTOM_REASONING_GRAPH_ENABLED: ${CUSTOM_REASONING_GRAPH_ENABLED:-0}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-gpt-5.5}
       DEFAULT_REASONING_EFFORT: ${DEFAULT_REASONING_EFFORT:-medium}
       MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}

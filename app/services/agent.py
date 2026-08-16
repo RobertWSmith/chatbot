@@ -62,7 +62,7 @@ def _stream_langgraph_response(
                 continue
             for block in message_chunk.content_blocks:
                 if block["type"] == "reasoning" and settings.get("reasoning_summaries_enabled"):
-                    text = block.get("reasoning") or block.get("summary") or ""
+                    text = _reasoning_summary_text(block)
                     if text:
                         yield {"type": "reasoning_summary", "text": text}
                 elif block["type"] == "text" and block.get("text"):
@@ -370,6 +370,26 @@ def _message_text(response: Any) -> str:
             block.get("text", "") if isinstance(block, dict) else str(block) for block in content
         )
     return str(content)
+
+
+def _reasoning_summary_text(block: dict[str, Any]) -> str:
+    reasoning = block.get("reasoning")
+    if isinstance(reasoning, str):
+        return reasoning
+
+    summary = block.get("summary")
+    if isinstance(summary, str):
+        return summary
+    if isinstance(summary, dict):
+        text = summary.get("text")
+        return text if isinstance(text, str) else ""
+    if isinstance(summary, list):
+        return "".join(
+            item.get("text", "")
+            for item in summary
+            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        )
+    return ""
 
 
 def _should_create_memory_proposal(prompt: str, settings: dict) -> bool:
