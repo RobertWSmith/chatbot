@@ -55,6 +55,13 @@ function ensureReasoning(article) {
   return details.querySelector(".markdown");
 }
 
+function collapseReasoning(article) {
+  const details = article.querySelector(".reasoning");
+  if (details) {
+    details.open = false;
+  }
+}
+
 async function readSse(response, onEvent) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -147,6 +154,7 @@ if (form) {
           status.textContent = payload.message || "Stream failed.";
         } else if (eventName === "done") {
           status.textContent = "Done";
+          collapseReasoning(assistant.article);
         }
         assistant.article.scrollIntoView({ block: "end" });
       });

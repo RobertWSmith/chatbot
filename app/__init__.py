@@ -30,11 +30,13 @@ def create_app(config_object: type[Config] | None = None, **overrides: object) -
     from .chat.routes import bp as chat_bp
     from .memory.routes import bp as memory_bp
     from .settings.routes import bp as settings_bp
+    from .tenancy.routes import bp as tenancy_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(memory_bp)
     app.register_blueprint(settings_bp)
+    app.register_blueprint(tenancy_bp)
 
     @app.get("/")
     def index():
