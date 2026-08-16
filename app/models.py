@@ -45,6 +45,7 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     is_email_verified = db.Column(db.Boolean, default=False, nullable=False)
+    is_platform_admin = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     session_version = db.Column(db.Integer, default=1, nullable=False)
@@ -76,6 +77,11 @@ class User(UserMixin, db.Model):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    group_memberships = db.relationship(
+        "GroupMembership",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     def set_password(self, password: str) -> None:
         self.password_hash = hash_password(password)
@@ -100,6 +106,155 @@ class User(UserMixin, db.Model):
         if data.get("purpose") != purpose:
             return None
         return db.session.get(User, data.get("user_id"))
+
+
+class Group(db.Model):
+    __tablename__ = "groups"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(120), nullable=False)
+    slug = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    created_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    creator = db.relationship("User", foreign_keys=[created_by_user_id])
+    memberships = db.relationship(
+        "GroupMembership",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    namespace_grants = db.relationship(
+        "GroupMCPNamespace",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    invitations = db.relationship(
+        "GroupInvitation",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+
+class GroupMembership(db.Model):
+    __tablename__ = "group_memberships"
+    __table_args__ = (
+        db.UniqueConstraint("group_id", "user_id", name="uq_group_memberships_group_user"),
+        db.CheckConstraint("role IN ('owner', 'member')", name="ck_group_memberships_role"),
+        db.Index("ix_group_memberships_user_group", "user_id", "group_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(
+        db.String(36),
+        db.ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role = db.Column(db.String(20), nullable=False, default="member")
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    group = db.relationship("Group", back_populates="memberships")
+    user = db.relationship("User", back_populates="group_memberships")
+
+
+class MCPNamespace(db.Model):
+    __tablename__ = "mcp_namespaces"
+    __table_args__ = (
+        db.CheckConstraint(
+            "transport IN ('http', 'streamable_http', 'sse')",
+            name="ck_mcp_namespaces_transport",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    namespace = db.Column(db.String(63), unique=True, nullable=False, index=True)
+    display_name = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.Text, nullable=False, default="")
+    transport = db.Column(db.String(32), nullable=False, default="http")
+    url = db.Column(db.String(2048), nullable=False)
+    auth_token_env_var = db.Column(db.String(255), nullable=True)
+    headers = db.Column(db.JSON, nullable=False, default=dict)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    group_grants = db.relationship(
+        "GroupMCPNamespace",
+        back_populates="mcp_namespace",
+        cascade="all, delete-orphan",
+    )
+
+
+class GroupMCPNamespace(db.Model):
+    __tablename__ = "group_mcp_namespaces"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "group_id",
+            "mcp_namespace_id",
+            name="uq_group_mcp_namespaces_group_namespace",
+        ),
+        db.Index("ix_group_mcp_namespaces_namespace_group", "mcp_namespace_id", "group_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(
+        db.String(36),
+        db.ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mcp_namespace_id = db.Column(
+        db.Integer,
+        db.ForeignKey("mcp_namespaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    group = db.relationship("Group", back_populates="namespace_grants")
+    mcp_namespace = db.relationship("MCPNamespace", back_populates="group_grants")
+
+
+class GroupInvitation(db.Model):
+    __tablename__ = "group_invitations"
+    __table_args__ = (
+        db.CheckConstraint("role IN ('owner', 'member')", name="ck_group_invitations_role"),
+        db.Index("ix_group_invitations_group_created", "group_id", "created_at"),
+    )
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    group_id = db.Column(
+        db.String(36),
+        db.ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(255), nullable=True)
+    role = db.Column(db.String(20), nullable=False, default="member")
+    created_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    accepted_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    accepted_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    group = db.relationship("Group", back_populates="invitations")
+    creator = db.relationship("User", foreign_keys=[created_by_user_id])
+    accepted_by = db.relationship("User", foreign_keys=[accepted_by_user_id])
 
 
 class UserSettings(db.Model):

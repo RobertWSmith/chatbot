@@ -17,6 +17,9 @@ services:
       MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}
       MEMORY_EMBEDDING_DIMENSIONS: ${MEMORY_EMBEDDING_DIMENSIONS:-1536}
       CONVERSATION_HISTORY_LIMIT: ${CONVERSATION_HISTORY_LIMIT:-24}
+      PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+      # Add namespace bearer tokens here, for example:
+      # BILLING_MCP_TOKEN: ${BILLING_MCP_TOKEN:-}
       FLASK_DEBUG: "0"
     depends_on:
       db:

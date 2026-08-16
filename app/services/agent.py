@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import re
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from typing import Any, TypedDict
 
 from flask import current_app
@@ -13,6 +14,11 @@ from app.services.conversation_summary import (
     summarize_overflowing_conversation,
 )
 from app.services.rag_memory import format_memory_search_results, search_long_term_memories
+from app.services.mcp_access import (
+    MCPToolLoadResult,
+    accessible_mcp_namespaces,
+    load_authorized_mcp_tools,
+)
 from app.services.web_resolver import resolve_web_link as fetch_web_link
 
 
@@ -26,7 +32,10 @@ def stream_agent_response(
         return
 
     try:
-        if current_app.config.get("CUSTOM_REASONING_GRAPH_ENABLED"):
+        use_custom_graph = current_app.config.get(
+            "CUSTOM_REASONING_GRAPH_ENABLED"
+        ) and not accessible_mcp_namespaces(user.id)
+        if use_custom_graph:
             yield from _stream_custom_reasoning_graph_response(user, thread, messages, settings)
         else:
             yield from _stream_langgraph_response(user, thread, messages, settings)
@@ -38,24 +47,47 @@ def stream_agent_response(
 def _stream_langgraph_response(
     user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
 ) -> Generator[dict, None, None]:
+    yield from _iterate_async_generator(
+        _astream_langgraph_response(user, thread, messages, settings)
+    )
+
+
+async def _astream_langgraph_response(
+    user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
+) -> AsyncGenerator[dict, None]:
     from langchain.agents import create_agent
     from langchain.messages import AIMessageChunk
 
     model = _build_chat_model(settings, provider_reasoning=True)
+    user_id = getattr(user, "id", None)
+    mcp_result = (
+        await load_authorized_mcp_tools(user_id)
+        if user_id is not None
+        else MCPToolLoadResult([], (), ())
+    )
+    for namespace in mcp_result.unavailable_namespaces:
+        yield {"type": "status", "text": f"MCP namespace {namespace} is unavailable"}
     agent = create_agent(
         model=model,
-        tools=_build_agent_tools(user, thread, settings),
+        tools=[*_build_agent_tools(user, thread, settings), *mcp_result.tools],
         store=None,
-        system_prompt=_system_prompt(settings),
+        system_prompt=_system_prompt(settings, mcp_result.loaded_namespaces),
     )
 
     yield {"type": "status", "text": "Thinking"}
-    for chunk in agent.stream(
+    stream_args = (
         {"messages": messages},
-        stream_mode=["messages", "updates"],
-        version="v2",
-        config={"configurable": {"thread_id": thread.id}},
-    ):
+    )
+    stream_kwargs = {
+        "stream_mode": ["messages", "updates"],
+        "version": "v2",
+        "config": {"configurable": {"thread_id": thread.id}},
+    }
+    if hasattr(agent, "astream"):
+        chunks = agent.astream(*stream_args, **stream_kwargs)
+    else:
+        chunks = _as_async_iterator(agent.stream(*stream_args, **stream_kwargs))
+    async for chunk in chunks:
         if chunk["type"] == "messages":
             message_chunk, _metadata = chunk["data"]
             if not isinstance(message_chunk, AIMessageChunk):
@@ -69,6 +101,25 @@ def _stream_langgraph_response(
                     yield {"type": "token", "text": block["text"]}
         elif chunk["type"] == "updates":
             yield {"type": "status", "text": "Updated agent state"}
+
+
+async def _as_async_iterator(items):
+    for item in items:
+        yield item
+
+
+def _iterate_async_generator(generator: AsyncGenerator[dict, None]) -> Generator[dict, None, None]:
+    loop = asyncio.new_event_loop()
+    try:
+        while True:
+            try:
+                yield loop.run_until_complete(generator.__anext__())
+            except StopAsyncIteration:
+                break
+    finally:
+        loop.run_until_complete(generator.aclose())
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.close()
 
 
 class ReasoningState(TypedDict, total=False):
@@ -479,7 +530,7 @@ def _stream_demo_response(
     thread: ChatThread,
     prompt: str,
     settings: dict,
-    messages: list[dict[str, str]],
+    _messages: list[dict[str, str]],
 ) -> Generator[dict, None, None]:
     yield {"type": "status", "text": "Demo mode: set OPENAI_API_KEY to use LangGraph with OpenAI."}
     if settings.get("reasoning_summaries_enabled"):
@@ -489,19 +540,8 @@ def _stream_demo_response(
                 "No API key is configured, so this local demo response validates streaming only."
             ),
         }
-    previous_messages = messages[:-1]
-    context_note = ""
-    if previous_messages:
-        recent = previous_messages[-4:]
-        context_lines = [f"- {message['role']}: {message['content'][:240]}" for message in recent]
-        context_note = (
-            "Recent Postgres conversation context:\n\n" + "\n".join(context_lines) + "\n\n"
-        )
     text = (
         "I am running in **local demo mode** because no OpenAI API key is configured.\n\n"
-        f"{context_note}"
-        "Your message was:\n\n"
-        f"> {prompt}\n\n"
         "Once `OPENAI_API_KEY` and Postgres are configured, this endpoint streams LangGraph "
         "messages, tool progress, reasoning summaries, and user-approved memory proposals."
     )
@@ -527,7 +567,17 @@ def _stream_demo_response(
         }
 
 
-def _system_prompt(settings: dict[str, Any]) -> str:
+def _system_prompt(
+    settings: dict[str, Any], mcp_namespaces: tuple[str, ...] = ()
+) -> str:
+    mcp_guidance = ""
+    if mcp_namespaces:
+        namespace_list = ", ".join(mcp_namespaces)
+        mcp_guidance = (
+            f" The authenticated user can use tools from these MCP namespaces: {namespace_list}. "
+            "MCP tool names begin with mcp_<namespace>_; select only a tool from the namespace "
+            "that owns the requested data or operation."
+        )
     return (
         "You are a helpful chatbot. Respond in clean GitHub-flavored Markdown. "
         "Use web_search for current events, recently changed facts, or external information "
@@ -541,6 +591,7 @@ def _system_prompt(settings: dict[str, Any]) -> str:
         "same chat, answer from that context. "
         "Use propose_memory only for stable user preferences or facts worth remembering, "
         "and understand that the user must approve every proposed memory before it persists. "
+        f"{mcp_guidance} "
         f"User settings: compact_mode={settings.get('compact_mode')}, "
         f"font_size={settings.get('font_size')}."
     )

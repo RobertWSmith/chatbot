@@ -48,3 +48,70 @@ def test_cross_user_thread_access_is_blocked(client):
     register(client, email="b@example.com")
     response = client.get(f"/chat/{thread_id}")
     assert response.status_code == 404
+
+
+def test_saved_reasoning_summary_is_marked_for_markdown_rendering(client, app):
+    register(client)
+    thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+
+    with app.app_context():
+        thread = db.session.get(ChatThread, thread_id)
+        db.session.add(
+            ChatMessage(
+                thread_id=thread_id,
+                user_id=thread.user_id,
+                role="assistant",
+                content="Done.",
+                reasoning_summary="**Checked**\n\n- First item",
+            )
+        )
+        db.session.commit()
+
+    response = client.get(f"/chat/{thread_id}")
+
+    assert response.status_code == 200
+    assert b'class="reasoning"' in response.data
+    assert b'<details class="reasoning" open>' not in response.data
+    assert b'data-markdown-source="**Checked**' in response.data
+
+
+def test_demo_response_does_not_echo_the_user_prompt(client):
+    register(client)
+    thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+    prompt = "unique prompt that should only appear in the user message"
+
+    response = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        json={"message": prompt},
+    )
+
+    assert response.status_code == 200
+    assert prompt.encode() not in response.data
+    assert b"Your message was" not in response.data
+
+
+def test_demo_response_does_not_repeat_prior_messages(client, app):
+    register(client)
+    thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+    prior_response = "PRIOR_RESPONSE_SENTINEL"
+
+    with app.app_context():
+        thread = db.session.get(ChatThread, thread_id)
+        db.session.add(
+            ChatMessage(
+                thread_id=thread_id,
+                user_id=thread.user_id,
+                role="assistant",
+                content=prior_response,
+            )
+        )
+        db.session.commit()
+
+    response = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        json={"message": "Give me a fresh response"},
+    )
+
+    assert response.status_code == 200
+    assert prior_response.encode() not in response.data
+    assert b"Recent Postgres conversation context" not in response.data

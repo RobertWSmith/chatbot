@@ -23,6 +23,7 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    MEMORY_EMBEDDING_MODEL=text-embedding-3-small
    MEMORY_EMBEDDING_DIMENSIONS=1536
    CONVERSATION_HISTORY_LIMIT=24
+   PLATFORM_ADMIN_EMAILS=admin@example.com
    ```
 
 4. Run migrations:
@@ -66,3 +67,50 @@ That path treats `reasoning_effort` as graph topology:
 The custom graph currently uses `CHAT_MODEL_PROVIDER=openai`, but model construction is
 isolated in the service layer so additional providers can be added without changing the
 reasoning workflow.
+
+## Multi-tenant MCP access
+
+MCP access is granted through groups. A user can belong to any number of groups and gets
+the deduplicated union of every enabled MCP namespace assigned to those groups. The union
+is resolved again at the start of every agent run, so removing a membership or namespace
+grant affects the next message without requiring the user to sign in again.
+
+Set `PLATFORM_ADMIN_EMAILS` before registering the initial platform administrator. Existing
+accounts can instead be promoted by setting `users.is_platform_admin` directly. The flow is:
+
+1. An authenticated user creates a group with `POST /api/groups` and becomes its owner.
+2. A group owner creates a one-time, optionally email-bound invitation with
+   `POST /api/groups/<group-id>/invitations`.
+3. The invited authenticated user submits its token to `POST /api/groups/join`.
+4. A platform administrator creates a remote MCP namespace with
+   `POST /api/admin/mcp-namespaces`, then grants it using
+   `PUT /api/admin/groups/<group-id>/mcp-namespaces/<namespace>`.
+
+Example namespace request:
+
+```json
+{
+  "namespace": "billing",
+  "display_name": "Billing",
+  "transport": "http",
+  "url": "https://mcp.example.com/mcp",
+  "auth_token_env_var": "BILLING_MCP_TOKEN",
+  "headers": {"X-Client": "chatbot"}
+}
+```
+
+Set `BILLING_MCP_TOKEN` in the web process environment. The database stores only that
+environment-variable name, not the bearer token. Only remote HTTP/SSE transports are
+accepted by the application. Loaded tools are prefixed as `mcp_<namespace>_...`, which
+keeps identically named tools from separate tenant integrations distinct.
+
+Useful authenticated endpoints:
+
+- `GET /api/groups` lists the current user's groups and per-group namespace grants.
+- `GET /api/groups/<group-id>/members` lists group members.
+- `DELETE /api/groups/<group-id>/members/<user-id>` revokes membership (owner only).
+- `GET /api/me/mcp-namespaces` returns the current user's effective namespace union.
+- `DELETE /api/admin/groups/<group-id>/mcp-namespaces/<namespace>` revokes a grant.
+
+The optional custom reasoning graph does not implement tool execution. Users who have any
+MCP namespace grants therefore use the standard tool-capable LangGraph agent automatically.

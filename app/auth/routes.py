@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
 from app.extensions import db
@@ -42,7 +42,10 @@ def register():
         if User.query.filter_by(email=email).first():
             flash("An account already exists for that email.", "error")
         else:
-            user = User(email=email)
+            user = User(
+                email=email,
+                is_platform_admin=email in current_app.config.get("PLATFORM_ADMIN_EMAILS", ()),
+            )
             user.set_password(form.password.data)
             user.settings = UserSettings()
             db.session.add(user)
