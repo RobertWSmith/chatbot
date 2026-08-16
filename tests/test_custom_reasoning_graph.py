@@ -11,7 +11,10 @@ from .conftest import register
 
 
 class FakeChatModel:
+    """Provide deterministic responses for custom graph tests."""
+
     def invoke(self, messages):
+        """Return a response selected from the latest node instruction."""
         prompt = messages[-1]["content"]
         if "Plan the answer" in prompt:
             return SimpleNamespace(content="Use the available context, then answer directly.")
@@ -25,7 +28,10 @@ class FakeChatModel:
 
 
 class FakePrebuiltAgent:
+    """Provide a deterministic provider-reasoning stream for tests."""
+
     def stream(self, *args, **kwargs):
+        """Yield one Responses API-style reasoning summary block."""
         yield {
             "type": "messages",
             "data": (
@@ -33,9 +39,7 @@ class FakePrebuiltAgent:
                     content=[
                         {
                             "type": "reasoning",
-                            "summary": [
-                                {"type": "summary_text", "text": "Prepared the response."}
-                            ],
+                            "summary": [{"type": "summary_text", "text": "Prepared the response."}],
                         }
                     ]
                 ),
@@ -45,6 +49,7 @@ class FakePrebuiltAgent:
 
 
 def test_custom_reasoning_graph_streams_plan_and_answer(client, app, monkeypatch):
+    """Ensure medium effort streams a public plan and final answer."""
     app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
     register(client)
 
@@ -72,6 +77,7 @@ def test_custom_reasoning_graph_streams_plan_and_answer(client, app, monkeypatch
 
 
 def test_high_effort_custom_graph_can_create_memory_proposal(client, app, monkeypatch):
+    """Ensure high effort can create a reviewable memory proposal."""
     app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
     register(client)
 
@@ -97,8 +103,7 @@ def test_high_effort_custom_graph_can_create_memory_proposal(client, app, monkey
         assert PendingMemory.query.filter_by(user_id=user.id, status="pending").count() == 1
 
     assert any(
-        event["type"] == "reasoning_summary" and "Self-check:" in event["text"]
-        for event in events
+        event["type"] == "reasoning_summary" and "Self-check:" in event["text"] for event in events
     )
     assert any(event["type"] == "memory_proposal" for event in events)
     assert any(
@@ -108,6 +113,7 @@ def test_high_effort_custom_graph_can_create_memory_proposal(client, app, monkey
 
 
 def test_high_effort_custom_graph_handles_no_memory_proposal(client, app, monkeypatch):
+    """Ensure high effort completes when no memory proposal is warranted."""
     app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
     register(client)
 
@@ -138,6 +144,7 @@ def test_high_effort_custom_graph_handles_no_memory_proposal(client, app, monkey
 
 
 def test_reasoning_effort_selects_graph_workflow():
+    """Ensure each effort level maps to the intended graph topology."""
     assert agent_service._reasoning_workflow_for_effort("minimal") == ["answer"]
     assert agent_service._reasoning_workflow_for_effort("medium") == [
         "gather_context",
@@ -148,6 +155,7 @@ def test_reasoning_effort_selects_graph_workflow():
 
 
 def test_reasoning_summary_text_flattens_responses_api_blocks():
+    """Ensure current Responses API summary blocks flatten to text."""
     block = {
         "type": "reasoning",
         "summary": [
@@ -162,6 +170,7 @@ def test_reasoning_summary_text_flattens_responses_api_blocks():
 
 
 def test_reasoning_summary_text_supports_legacy_string_blocks():
+    """Ensure legacy string reasoning blocks remain supported."""
     block = {"type": "reasoning", "reasoning": "Prepared the response."}
 
     assert agent_service._reasoning_summary_text(block) == "Prepared the response."
@@ -169,6 +178,7 @@ def test_reasoning_summary_text_supports_legacy_string_blocks():
 
 @pytest.mark.parametrize("effort", ["high", "xhigh"])
 def test_prebuilt_agent_streams_reasoning_summary_text(monkeypatch, effort):
+    """Ensure provider-native reasoning summaries become stream events."""
     monkeypatch.setattr("langchain.agents.create_agent", lambda **kwargs: FakePrebuiltAgent())
     monkeypatch.setattr(agent_service, "_build_chat_model", lambda settings, **kwargs: object())
     monkeypatch.setattr(agent_service, "_build_agent_tools", lambda user, thread, settings: [])

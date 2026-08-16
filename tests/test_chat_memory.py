@@ -5,6 +5,7 @@ from .conftest import register
 
 
 def test_chat_stream_persists_messages_and_memory_proposal(client, app):
+    """Ensure demo streaming persists both messages and a memory proposal."""
     register(client)
     thread_response = client.post("/api/chat/threads")
     thread_id = thread_response.get_json()["thread"]["id"]
@@ -40,7 +41,29 @@ def test_chat_stream_persists_messages_and_memory_proposal(client, app):
         assert PendingMemory.query.filter_by(user_id=thread.user_id, status="pending").count() == 1
 
 
+def test_demo_response_respects_disabled_memory_proposals(client, app):
+    """Ensure demo mode honors the user's memory-proposal privacy setting."""
+    register(client)
+    settings_response = client.patch(
+        "/api/settings",
+        json={"privacy": {"allow_memory_proposals": False}},
+    )
+    assert settings_response.status_code == 200
+    thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+
+    response = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        json={"message": "please remember that privacy comes first"},
+    )
+
+    assert response.status_code == 200
+    assert b"event: memory_proposal" not in response.data
+    with app.app_context():
+        assert PendingMemory.query.count() == 0
+
+
 def test_cross_user_thread_access_is_blocked(client):
+    """Ensure a user cannot access another user's chat thread."""
     register(client, email="a@example.com")
     thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
     client.get("/logout")
@@ -51,6 +74,7 @@ def test_cross_user_thread_access_is_blocked(client):
 
 
 def test_saved_reasoning_summary_is_marked_for_markdown_rendering(client, app):
+    """Ensure persisted reasoning summaries render through the Markdown path."""
     register(client)
     thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
 
@@ -76,6 +100,7 @@ def test_saved_reasoning_summary_is_marked_for_markdown_rendering(client, app):
 
 
 def test_demo_response_does_not_echo_the_user_prompt(client):
+    """Ensure demo output does not reflect arbitrary prompt content."""
     register(client)
     thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
     prompt = "unique prompt that should only appear in the user message"
@@ -91,6 +116,7 @@ def test_demo_response_does_not_echo_the_user_prompt(client):
 
 
 def test_demo_response_does_not_repeat_prior_messages(client, app):
+    """Ensure demo output does not leak previous conversation content."""
     register(client)
     thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
     prior_response = "PRIOR_RESPONSE_SENTINEL"

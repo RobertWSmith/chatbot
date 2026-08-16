@@ -40,6 +40,24 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
 
 If `OPENAI_API_KEY` is empty, chat uses local demo streaming so the UI and auth flow can be tested without model calls.
 
+## Tests
+
+Run the complete suite from the project root:
+
+```powershell
+python -m coverage run -m pytest
+python -m coverage report
+python -m ruff check .
+python -m ruff format --check .
+```
+
+The tests exercise authentication and password migration, chat streaming and telemetry,
+short- and long-term memory, settings validation, reasoning workflows, public web URL
+safety, and multi-tenant MCP authorization. The code-quality tests also require every
+Python function, method, and class—including test helpers and migrations—to retain a
+docstring with basic Google-style summary and section formatting. The configured coverage
+check fails below 80% application statement coverage.
+
 ## Memory
 
 Short-term conversation memory is stored in Postgres as chat messages and replayed into each agent call for the active thread. `CONVERSATION_HISTORY_LIMIT` controls how many recent turns are sent back verbatim. When a thread exceeds that limit, older turns are compacted into rolling `conversation_memory_snapshots` summaries and prepended to the agent context.

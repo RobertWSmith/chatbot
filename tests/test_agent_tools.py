@@ -3,6 +3,7 @@ from app.services.agent import _build_agent_tools, _system_prompt
 
 
 def test_agent_registers_duckduckgo_web_search_tool(app):
+    """Ensure the agent exposes memory and web tools with useful metadata."""
     with app.app_context():
         user = User(id=1, email="search@example.com")
         thread = ChatThread(id="thread-1", user_id=user.id)
@@ -23,6 +24,7 @@ def test_agent_registers_duckduckgo_web_search_tool(app):
 
 
 def test_system_prompt_explains_web_search_policy():
+    """Ensure system instructions explain when and how to use web tools."""
     prompt = _system_prompt({})
 
     assert "Use web_search for current events" in prompt

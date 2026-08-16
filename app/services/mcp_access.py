@@ -22,17 +22,34 @@ class MCPConfigurationError(RuntimeError):
 
 @dataclass(frozen=True)
 class MCPToolLoadResult:
+    """Describe authorized MCP tools and namespace load outcomes."""
+
     tools: list[Any]
     loaded_namespaces: tuple[str, ...]
     unavailable_namespaces: tuple[str, ...]
 
 
 def accessible_mcp_namespaces(user_id: int) -> list[MCPNamespace]:
-    """Return the enabled union of MCP namespaces granted by all of a user's groups."""
+    """Return enabled MCP namespaces granted by all of a user's groups.
+
+    Args:
+        user_id: User whose effective grants should be resolved.
+
+    Returns:
+        Deduplicated namespaces ordered by namespace name.
+    """
     return list(db.session.scalars(_accessible_mcp_namespaces_statement(user_id)).all())
 
 
 def _accessible_mcp_namespaces_statement(user_id: int):
+    """Build the query for a user's effective MCP namespaces.
+
+    Args:
+        user_id: User whose group grants should be queried.
+
+    Returns:
+        A SQLAlchemy select statement for enabled namespaces.
+    """
     grant_exists = exists(
         select(GroupMCPNamespace.id)
         .join(
@@ -55,6 +72,17 @@ def _accessible_mcp_namespaces_statement(user_id: int):
 
 
 async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
+    """Load tools from every MCP namespace authorized for a user.
+
+    Namespace failures are isolated so one unavailable server does not hide
+    tools loaded successfully from another server.
+
+    Args:
+        user_id: User whose authorized tools should be loaded.
+
+    Returns:
+        Loaded tools and successful or unavailable namespace names.
+    """
     namespaces = accessible_mcp_namespaces(user_id)
     if not namespaces:
         return MCPToolLoadResult([], (), ())
@@ -82,7 +110,8 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
             tool.name = _unique_tool_name(tool.name, used_tool_names)
             used_tool_names.add(tool.name)
             tool.description = (
-                f"[MCP namespace: {item.namespace}] {tool.description or 'No description provided.'}"
+                f"[MCP namespace: {item.namespace}] "
+                f"{tool.description or 'No description provided.'}"
             )
             tool.metadata = {
                 **(getattr(tool, "metadata", None) or {}),
@@ -94,6 +123,14 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
 
 
 async def _load_namespace_tools(item: MCPNamespace) -> list[Any]:
+    """Load tools from one configured MCP namespace.
+
+    Args:
+        item: Namespace configuration to connect to.
+
+    Returns:
+        Tools reported by the remote MCP server.
+    """
     from langchain_mcp_adapters.client import MultiServerMCPClient
 
     server_name = f"mcp_{item.namespace}"
@@ -105,6 +142,18 @@ async def _load_namespace_tools(item: MCPNamespace) -> list[Any]:
 
 
 def _connection_config(item: MCPNamespace) -> dict[str, Any]:
+    """Build a safe remote connection configuration for an MCP namespace.
+
+    Args:
+        item: Persisted namespace configuration.
+
+    Returns:
+        Configuration accepted by ``MultiServerMCPClient``.
+
+    Raises:
+        MCPConfigurationError: If the URL, transport, headers, or referenced
+            bearer token is invalid.
+    """
     parsed = urlparse(item.url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise MCPConfigurationError("MCP URL is invalid.")
@@ -113,8 +162,7 @@ def _connection_config(item: MCPNamespace) -> dict[str, Any]:
 
     raw_headers = item.headers or {}
     if not isinstance(raw_headers, dict) or any(
-        not isinstance(key, str) or not isinstance(value, str)
-        for key, value in raw_headers.items()
+        not isinstance(key, str) or not isinstance(value, str) for key, value in raw_headers.items()
     ):
         raise MCPConfigurationError("MCP headers are invalid.")
     headers = dict(raw_headers)
@@ -134,6 +182,15 @@ def _connection_config(item: MCPNamespace) -> dict[str, Any]:
 
 
 def _unique_tool_name(name: str, used_names: set[str]) -> str:
+    """Create a bounded tool name that is unique within a loaded tool set.
+
+    Args:
+        name: Tool name reported by an MCP server.
+        used_names: Names already assigned during the current load.
+
+    Returns:
+        A unique name no longer than 64 characters.
+    """
     candidate = _bounded_tool_name(name)
     if candidate not in used_names:
         return candidate
@@ -143,12 +200,20 @@ def _unique_tool_name(name: str, used_names: set[str]) -> str:
     suffix = 2
     while candidate in used_names:
         suffix_text = f"_{suffix}"
-        candidate = f"{base[:64 - len(suffix_text)]}{suffix_text}"
+        candidate = f"{base[: 64 - len(suffix_text)]}{suffix_text}"
         suffix += 1
     return candidate
 
 
 def _bounded_tool_name(name: str) -> str:
+    """Bound a tool name to 64 characters while preserving uniqueness data.
+
+    Args:
+        name: Original tool name.
+
+    Returns:
+        The original name or a truncated name with a stable hash suffix.
+    """
     if len(name) <= 64:
         return name
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]

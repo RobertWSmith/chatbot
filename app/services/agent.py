@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Iterable
 from typing import Any, TypedDict
 
 from flask import current_app
@@ -13,18 +13,28 @@ from app.services.conversation_summary import (
     snapshot_context_message,
     summarize_overflowing_conversation,
 )
-from app.services.rag_memory import format_memory_search_results, search_long_term_memories
 from app.services.mcp_access import (
     MCPToolLoadResult,
     accessible_mcp_namespaces,
     load_authorized_mcp_tools,
 )
+from app.services.rag_memory import format_memory_search_results, search_long_term_memories
 from app.services.web_resolver import resolve_web_link as fetch_web_link
 
 
 def stream_agent_response(
     user: User, thread: ChatThread, prompt: str
 ) -> Generator[dict, None, None]:
+    """Stream response events for a user prompt.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Chat thread containing the prompt.
+        prompt: Latest user message.
+
+    Yields:
+        Status, reasoning-summary, token, and memory-proposal events.
+    """
     settings = user.settings.merged()
     messages = _conversation_messages(user, thread, prompt)
     if not current_app.config.get("OPENAI_API_KEY"):
@@ -47,6 +57,17 @@ def stream_agent_response(
 def _stream_langgraph_response(
     user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
 ) -> Generator[dict, None, None]:
+    """Bridge the asynchronous LangGraph stream into synchronous Flask code.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        messages: Model-ready conversation messages.
+        settings: Effective user settings.
+
+    Yields:
+        Agent response events.
+    """
     yield from _iterate_async_generator(
         _astream_langgraph_response(user, thread, messages, settings)
     )
@@ -55,6 +76,17 @@ def _stream_langgraph_response(
 async def _astream_langgraph_response(
     user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
 ) -> AsyncGenerator[dict, None]:
+    """Run the standard tool-capable LangGraph agent asynchronously.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        messages: Model-ready conversation messages.
+        settings: Effective user settings.
+
+    Yields:
+        Normalized response events from LangGraph stream chunks.
+    """
     from langchain.agents import create_agent
     from langchain.messages import AIMessageChunk
 
@@ -75,18 +107,15 @@ async def _astream_langgraph_response(
     )
 
     yield {"type": "status", "text": "Thinking"}
-    stream_args = (
-        {"messages": messages},
-    )
     stream_kwargs = {
         "stream_mode": ["messages", "updates"],
         "version": "v2",
         "config": {"configurable": {"thread_id": thread.id}},
     }
     if hasattr(agent, "astream"):
-        chunks = agent.astream(*stream_args, **stream_kwargs)
+        chunks = agent.astream({"messages": messages}, **stream_kwargs)
     else:
-        chunks = _as_async_iterator(agent.stream(*stream_args, **stream_kwargs))
+        chunks = _as_async_iterator(agent.stream({"messages": messages}, **stream_kwargs))
     async for chunk in chunks:
         if chunk["type"] == "messages":
             message_chunk, _metadata = chunk["data"]
@@ -103,12 +132,28 @@ async def _astream_langgraph_response(
             yield {"type": "status", "text": "Updated agent state"}
 
 
-async def _as_async_iterator(items):
+async def _as_async_iterator(items: Iterable[dict]) -> AsyncGenerator[dict, None]:
+    """Adapt a synchronous iterable for asynchronous consumption.
+
+    Args:
+        items: Synchronous stream items.
+
+    Yields:
+        Each item without changing its contents.
+    """
     for item in items:
         yield item
 
 
 def _iterate_async_generator(generator: AsyncGenerator[dict, None]) -> Generator[dict, None, None]:
+    """Consume an async generator from synchronous application code.
+
+    Args:
+        generator: Asynchronous event stream.
+
+    Yields:
+        Each event produced by the asynchronous stream.
+    """
     loop = asyncio.new_event_loop()
     try:
         while True:
@@ -123,6 +168,8 @@ def _iterate_async_generator(generator: AsyncGenerator[dict, None]) -> Generator
 
 
 class ReasoningState(TypedDict, total=False):
+    """Define state accumulated by the custom reasoning graph."""
+
     messages: list[dict[str, str]]
     context: str
     plan: str
@@ -136,6 +183,17 @@ class ReasoningState(TypedDict, total=False):
 def _stream_custom_reasoning_graph_response(
     user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
 ) -> Generator[dict, None, None]:
+    """Run the application-owned reasoning graph for a chat response.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        messages: Model-ready conversation messages.
+        settings: Effective user settings.
+
+    Yields:
+        Status, reasoning-summary, answer, and memory-proposal events.
+    """
     from langgraph.graph import END, START, StateGraph
 
     model = _build_chat_model(settings, provider_reasoning=False)
@@ -160,10 +218,22 @@ def _stream_custom_reasoning_graph_response(
     ):
         for node_name, values in update.items():
             yield {"type": "status", "text": _reasoning_status(node_name)}
-            yield from _reasoning_events(node_name, values or {}, settings)
+            yield from _reasoning_events(values or {}, settings)
 
 
-def _build_chat_model(settings: dict, *, provider_reasoning: bool):
+def _build_chat_model(settings: dict, *, provider_reasoning: bool) -> Any:
+    """Build the configured chat model.
+
+    Args:
+        settings: Effective user settings.
+        provider_reasoning: Whether to enable provider-native reasoning.
+
+    Returns:
+        A configured LangChain chat model.
+
+    Raises:
+        ValueError: If the configured provider is unsupported.
+    """
     provider = current_app.config.get("CHAT_MODEL_PROVIDER", "openai")
     if provider != "openai":
         raise ValueError(f"Unsupported chat model provider: {provider}")
@@ -183,6 +253,14 @@ def _build_chat_model(settings: dict, *, provider_reasoning: bool):
 
 
 def _reasoning_workflow_for_effort(effort: str) -> list[str]:
+    """Map a reasoning-effort setting to custom graph node names.
+
+    Args:
+        effort: User-selected reasoning effort.
+
+    Returns:
+        Ordered graph node names, defaulting to the medium workflow.
+    """
     workflows = {
         "minimal": ["answer"],
         "low": ["gather_context", "answer"],
@@ -202,9 +280,22 @@ def _reasoning_workflow_for_effort(effort: str) -> list[str]:
 
 
 def _custom_reasoning_nodes(
-    user: User, thread: ChatThread, settings: dict, model
+    user: User, thread: ChatThread, settings: dict, model: Any
 ) -> dict[str, Any]:
+    """Build closures used as custom reasoning graph nodes.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        settings: Effective user settings.
+        model: Chat model invoked by reasoning nodes.
+
+    Returns:
+        Node names mapped to callable graph nodes.
+    """
+
     def gather_context(state: ReasoningState) -> dict[str, str]:
+        """Gather recent conversation and approved-memory context."""
         context_parts = [_format_recent_context(state["messages"])]
         if settings.get("memory_enabled", True):
             memory_context = _safe_memory_context(user, _last_user_message(state["messages"]))
@@ -213,114 +304,89 @@ def _custom_reasoning_nodes(
         return {"context": "\n\n".join(part for part in context_parts if part)}
 
     def plan(state: ReasoningState) -> dict[str, str]:
-        response = model.invoke(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Create a short, user-safe answer plan. "
-                        "Do not reveal hidden chain-of-thought; list only the public approach."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": _reasoning_prompt(state, "Plan the answer."),
-                },
-            ]
-        )
-        return {"plan": _message_text(response)}
+        """Produce a concise, user-safe answer plan."""
+        return {
+            "plan": _invoke_reasoning_model(
+                model,
+                (
+                    "Create a short, user-safe answer plan. "
+                    "Do not reveal hidden chain-of-thought; list only the public approach."
+                ),
+                _reasoning_prompt(state, "Plan the answer."),
+            )
+        }
 
     def answer(state: ReasoningState) -> dict[str, str]:
-        response = model.invoke(
-            [
-                {"role": "system", "content": _system_prompt(settings)},
-                {
-                    "role": "user",
-                    "content": _reasoning_prompt(
-                        state,
-                        "Answer the user's latest message directly. Return only the final answer.",
-                    ),
-                },
-            ]
-        )
-        return {"answer": _message_text(response)}
+        """Answer directly for workflows that do not draft and revise."""
+        return {
+            "answer": _invoke_reasoning_model(
+                model,
+                _system_prompt(settings),
+                _reasoning_prompt(
+                    state,
+                    "Answer the user's latest message directly. Return only the final answer.",
+                ),
+            )
+        }
 
     def draft(state: ReasoningState) -> dict[str, str]:
-        response = model.invoke(
-            [
-                {"role": "system", "content": _system_prompt(settings)},
-                {
-                    "role": "user",
-                    "content": _reasoning_prompt(
-                        state,
-                        "Write a strong draft answer. It can be improved later.",
-                    ),
-                },
-            ]
-        )
-        return {"draft": _message_text(response)}
+        """Create an initial answer draft for higher-effort workflows."""
+        return {
+            "draft": _invoke_reasoning_model(
+                model,
+                _system_prompt(settings),
+                _reasoning_prompt(
+                    state,
+                    "Write a strong draft answer. It can be improved later.",
+                ),
+            )
+        }
 
     def alternative_draft(state: ReasoningState) -> dict[str, str]:
-        response = model.invoke(
-            [
-                {"role": "system", "content": _system_prompt(settings)},
-                {
-                    "role": "user",
-                    "content": _reasoning_prompt(
-                        state,
-                        "Write an alternate draft with a different organization or emphasis.",
-                    ),
-                },
-            ]
-        )
-        return {"alternative_draft": _message_text(response)}
+        """Create a structurally different draft for comparison."""
+        return {
+            "alternative_draft": _invoke_reasoning_model(
+                model,
+                _system_prompt(settings),
+                _reasoning_prompt(
+                    state,
+                    "Write an alternate draft with a different organization or emphasis.",
+                ),
+            )
+        }
 
     def critique(state: ReasoningState) -> dict[str, str]:
-        response = model.invoke(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Critique the draft answer for correctness, missing caveats, "
-                        "unsupported claims, and clarity. Keep it concise and user-safe."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": _reasoning_prompt(state, "Review the draft before finalizing."),
-                },
-            ]
-        )
-        return {"critique": _message_text(response)}
+        """Check answer drafts for correctness, omissions, and clarity."""
+        return {
+            "critique": _invoke_reasoning_model(
+                model,
+                (
+                    "Critique the draft answer for correctness, missing caveats, "
+                    "unsupported claims, and clarity. Keep it concise and user-safe."
+                ),
+                _reasoning_prompt(state, "Review the draft before finalizing."),
+            )
+        }
 
     def finalize(state: ReasoningState) -> dict[str, str]:
-        response = model.invoke(
-            [
-                {"role": "system", "content": _system_prompt(settings)},
-                {
-                    "role": "user",
-                    "content": _reasoning_prompt(
-                        state,
-                        "Revise using the critique. Return only the final user-facing answer.",
-                    ),
-                },
-            ]
-        )
-        return {"answer": _message_text(response)}
+        """Revise the selected draft using the critique."""
+        return {
+            "answer": _invoke_reasoning_model(
+                model,
+                _system_prompt(settings),
+                _reasoning_prompt(
+                    state,
+                    "Revise using the critique. Return only the final user-facing answer.",
+                ),
+            )
+        }
 
     def maybe_propose_memory(state: ReasoningState) -> dict[str, Any]:
+        """Persist a reviewable memory when the prompt and settings allow it."""
         prompt = _last_user_message(state["messages"])
         if not _should_create_memory_proposal(prompt, settings):
             return {}
-        proposal = PendingMemory(
-            user_id=user.id,
-            source_thread_id=thread.id,
-            memory_text=prompt[:4000],
-            category="user_request",
-            confidence=0.6,
-        )
-        db.session.add(proposal)
-        db.session.commit()
+        proposal = _create_memory_proposal(user, thread, prompt, "user_request", 0.6)
         return {
             "memory_proposal": {
                 "id": proposal.id,
@@ -342,9 +408,36 @@ def _custom_reasoning_nodes(
     }
 
 
-def _reasoning_events(
-    node_name: str, values: dict[str, Any], settings: dict
-) -> Generator[dict, None, None]:
+def _invoke_reasoning_model(model: Any, system_prompt: str, user_prompt: str) -> str:
+    """Invoke a reasoning node's chat model and normalize its text.
+
+    Args:
+        model: Chat model exposing an ``invoke`` method.
+        system_prompt: Instruction supplied as the system message.
+        user_prompt: State and task supplied as the user message.
+
+    Returns:
+        Normalized response text.
+    """
+    response = model.invoke(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    return _message_text(response)
+
+
+def _reasoning_events(values: dict[str, Any], settings: dict) -> Generator[dict, None, None]:
+    """Translate custom graph state updates into client-facing events.
+
+    Args:
+        values: State fields returned by the completed graph node.
+        settings: Effective user settings.
+
+    Yields:
+        Reasoning-summary, answer-token, and memory-proposal events.
+    """
     if settings.get("reasoning_summaries_enabled"):
         if plan := values.get("plan"):
             yield {"type": "reasoning_summary", "text": f"Plan:\n\n{plan}\n\n"}
@@ -357,6 +450,14 @@ def _reasoning_events(
 
 
 def _reasoning_status(node_name: str) -> str:
+    """Return a user-facing status for a custom graph node.
+
+    Args:
+        node_name: Completed graph node name.
+
+    Returns:
+        A concise progress message.
+    """
     statuses = {
         "gather_context": "Gathered context",
         "plan": "Planned answer",
@@ -371,6 +472,15 @@ def _reasoning_status(node_name: str) -> str:
 
 
 def _reasoning_prompt(state: ReasoningState, instruction: str) -> str:
+    """Build a model prompt from the accumulated reasoning state.
+
+    Args:
+        state: Current custom graph state.
+        instruction: Task for the next reasoning node.
+
+    Returns:
+        A plain-text prompt containing available state fields.
+    """
     parts = [instruction, f"Messages:\n{_format_messages(state['messages'])}"]
     if context := state.get("context"):
         parts.append(f"Context:\n{context}")
@@ -386,6 +496,14 @@ def _reasoning_prompt(state: ReasoningState, instruction: str) -> str:
 
 
 def _format_recent_context(messages: list[dict[str, str]]) -> str:
+    """Format at most six recent messages as context.
+
+    Args:
+        messages: Model-ready conversation messages.
+
+    Returns:
+        Labeled recent context, or an empty string.
+    """
     recent = messages[-6:]
     if not recent:
         return ""
@@ -393,10 +511,26 @@ def _format_recent_context(messages: list[dict[str, str]]) -> str:
 
 
 def _format_messages(messages: list[dict[str, str]]) -> str:
+    """Format model-ready messages as role-prefixed lines.
+
+    Args:
+        messages: Conversation messages with role and content fields.
+
+    Returns:
+        Newline-delimited message text.
+    """
     return "\n".join(f"{message['role']}: {message['content']}" for message in messages)
 
 
 def _last_user_message(messages: list[dict[str, str]]) -> str:
+    """Return the content of the newest user message.
+
+    Args:
+        messages: Model-ready conversation messages.
+
+    Returns:
+        Latest user content, or an empty string.
+    """
     for message in reversed(messages):
         if message.get("role") == "user":
             return message.get("content", "")
@@ -404,15 +538,32 @@ def _last_user_message(messages: list[dict[str, str]]) -> str:
 
 
 def _safe_memory_context(user: User, query: str) -> str:
+    """Retrieve approved memory context without failing a chat response.
+
+    Args:
+        user: User whose memories may be recalled.
+        query: Retrieval query.
+
+    Returns:
+        Formatted memory context, or an empty string on failure.
+    """
     try:
         memories = search_long_term_memories(user.id, query, limit=5)
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional memory must never prevent a response.
         return ""
     formatted = format_memory_search_results(memories)
     return f"Approved long-term memory:\n{formatted}" if formatted else ""
 
 
 def _message_text(response: Any) -> str:
+    """Normalize common chat-model response content into text.
+
+    Args:
+        response: Chat message, content block collection, or scalar value.
+
+    Returns:
+        Concatenated response text.
+    """
     content = getattr(response, "content", response)
     if isinstance(content, str):
         return content
@@ -424,6 +575,14 @@ def _message_text(response: Any) -> str:
 
 
 def _reasoning_summary_text(block: dict[str, Any]) -> str:
+    """Extract summary text from current and legacy reasoning blocks.
+
+    Args:
+        block: Provider reasoning content block.
+
+    Returns:
+        Extracted summary text, or an empty string.
+    """
     reasoning = block.get("reasoning")
     if isinstance(reasoning, str):
         return reasoning
@@ -444,6 +603,16 @@ def _reasoning_summary_text(block: dict[str, Any]) -> str:
 
 
 def _should_create_memory_proposal(prompt: str, settings: dict) -> bool:
+    """Check whether a prompt should create a reviewable memory proposal.
+
+    Args:
+        prompt: Latest user message.
+        settings: Effective user settings.
+
+    Returns:
+        Whether memory is enabled, proposals are allowed, and the user asked
+        the assistant to remember something.
+    """
     return (
         settings.get("memory_enabled", True)
         and settings.get("privacy", {}).get("allow_memory_proposals", True)
@@ -452,6 +621,16 @@ def _should_create_memory_proposal(prompt: str, settings: dict) -> bool:
 
 
 def _conversation_messages(user: User, thread: ChatThread, prompt: str) -> list[dict[str, str]]:
+    """Build model messages from rolling summary and recent persisted turns.
+
+    Args:
+        user: Owner of the conversation.
+        thread: Active chat thread.
+        prompt: Latest user prompt, which may already be persisted.
+
+    Returns:
+        Chronological model-ready messages with optional summary context.
+    """
     limit = max(1, int(current_app.config.get("CONVERSATION_HISTORY_LIMIT", 24)))
     rows = (
         ChatMessage.query.filter(
@@ -479,12 +658,29 @@ def _conversation_messages(user: User, thread: ChatThread, prompt: str) -> list[
 
 
 def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[Any]:
+    """Build tools scoped to the authenticated user and thread.
+
+    Args:
+        user: Authenticated user allowed to invoke the tools.
+        thread: Active chat thread used for memory provenance.
+        settings: Effective user settings controlling tool behavior.
+
+    Returns:
+        Memory, web-search, and web-resolution tools.
+    """
     from langchain.tools import tool
     from langchain_community.tools import DuckDuckGoSearchRun
 
     @tool
     def recall_user_memory(query: str) -> str:
-        """Retrieve approved long-term memories with vector similarity search."""
+        """Retrieve approved long-term memories with vector similarity search.
+
+        Args:
+            query: Natural-language memory search query.
+
+        Returns:
+            Formatted matching memories or a disabled message.
+        """
         if not settings.get("memory_enabled", True):
             return "Memory is disabled for this user."
         return format_memory_search_results(search_long_term_memories(user.id, query, limit=5))
@@ -493,25 +689,40 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
     def propose_memory(
         memory_text: str, category: str = "preference", confidence: float = 0.5
     ) -> str:
-        """Create a user-reviewable memory proposal. The user must approve it before saving."""
+        """Create a memory proposal that requires user approval before indexing.
+
+        Args:
+            memory_text: Stable preference or fact worth remembering.
+            category: Short classification for the proposed memory.
+            confidence: Confidence value clamped between zero and one.
+
+        Returns:
+            A proposal identifier or a settings-based disabled message.
+        """
         if not settings.get("memory_enabled", True):
             return "Memory is disabled for this user."
         if not settings.get("privacy", {}).get("allow_memory_proposals", True):
             return "The user has disabled memory proposals."
-        proposal = PendingMemory(
-            user_id=user.id,
-            source_thread_id=thread.id,
-            memory_text=memory_text[:4000],
-            category=category[:80] or "preference",
-            confidence=max(0.0, min(float(confidence), 1.0)),
+        proposal = _create_memory_proposal(
+            user,
+            thread,
+            memory_text,
+            category,
+            confidence,
         )
-        db.session.add(proposal)
-        db.session.commit()
         return f"Created memory proposal {proposal.id} for user review."
 
     @tool
     def resolve_web_link(url: str, question: str = "") -> str:
-        """Fetch a public web result URL and extract readable content relevant to the question."""
+        """Extract relevant readable content from a public web result URL.
+
+        Args:
+            url: Public HTTP or HTTPS result URL.
+            question: Optional question used to select relevant excerpts.
+
+        Returns:
+            Readable source content or a safe resolver error.
+        """
         return fetch_web_link(url, question)
 
     web_search = DuckDuckGoSearchRun(
@@ -525,6 +736,37 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
     return [recall_user_memory, propose_memory, web_search, resolve_web_link]
 
 
+def _create_memory_proposal(
+    user: User,
+    thread: ChatThread,
+    memory_text: str,
+    category: str,
+    confidence: float,
+) -> PendingMemory:
+    """Normalize and persist a user-reviewable memory proposal.
+
+    Args:
+        user: User who owns the proposal.
+        thread: Thread from which the proposal originated.
+        memory_text: Proposed memory content.
+        category: Proposed memory classification.
+        confidence: Proposal confidence, which is clamped to a valid range.
+
+    Returns:
+        The persisted proposal.
+    """
+    proposal = PendingMemory(
+        user_id=user.id,
+        source_thread_id=thread.id,
+        memory_text=memory_text[:4000],
+        category=category[:80] or "preference",
+        confidence=max(0.0, min(float(confidence), 1.0)),
+    )
+    db.session.add(proposal)
+    db.session.commit()
+    return proposal
+
+
 def _stream_demo_response(
     user: User,
     thread: ChatThread,
@@ -532,6 +774,18 @@ def _stream_demo_response(
     settings: dict,
     _messages: list[dict[str, str]],
 ) -> Generator[dict, None, None]:
+    """Stream a deterministic local response when no API key is configured.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        prompt: Latest user prompt.
+        settings: Effective user settings.
+        _messages: Prepared messages, unused by deterministic demo mode.
+
+    Yields:
+        Demo status, reasoning-summary, token, and memory-proposal events.
+    """
     yield {"type": "status", "text": "Demo mode: set OPENAI_API_KEY to use LangGraph with OpenAI."}
     if settings.get("reasoning_summaries_enabled"):
         yield {
@@ -548,16 +802,8 @@ def _stream_demo_response(
     for token in re.split(r"(\s+)", text):
         if token:
             yield {"type": "token", "text": token}
-    if settings.get("memory_enabled") and "remember" in prompt.lower():
-        proposal = PendingMemory(
-            user_id=user.id,
-            source_thread_id=thread.id,
-            memory_text=prompt[:4000],
-            category="user_request",
-            confidence=0.6,
-        )
-        db.session.add(proposal)
-        db.session.commit()
+    if _should_create_memory_proposal(prompt, settings):
+        proposal = _create_memory_proposal(user, thread, prompt, "user_request", 0.6)
         yield {
             "type": "memory_proposal",
             "id": proposal.id,
@@ -567,9 +813,16 @@ def _stream_demo_response(
         }
 
 
-def _system_prompt(
-    settings: dict[str, Any], mcp_namespaces: tuple[str, ...] = ()
-) -> str:
+def _system_prompt(settings: dict[str, Any], mcp_namespaces: tuple[str, ...] = ()) -> str:
+    """Build the agent's system prompt from settings and tool access.
+
+    Args:
+        settings: Effective user settings.
+        mcp_namespaces: Authorized MCP namespace names loaded for this run.
+
+    Returns:
+        Complete system instructions for the chat agent.
+    """
     mcp_guidance = ""
     if mcp_namespaces:
         namespace_list = ", ".join(mcp_namespaces)

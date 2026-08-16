@@ -9,6 +9,7 @@ from app.models import (
 
 
 def test_conversation_memory_schema_persists_thread_context(app):
+    """Ensure structured conversation memory persists its thread context."""
     with app.app_context():
         user = User(email="memory@example.com")
         user.set_password("very-secure-password")

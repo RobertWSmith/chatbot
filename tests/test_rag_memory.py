@@ -6,6 +6,7 @@ from .conftest import register
 
 
 def test_memory_approval_indexes_long_term_rag_memory(client, app):
+    """Ensure approving a proposal creates an indexed long-term memory."""
     register(client)
     with app.app_context():
         proposal = PendingMemory.query.filter_by(status="pending").one_or_none()
@@ -34,6 +35,7 @@ def test_memory_approval_indexes_long_term_rag_memory(client, app):
 
 
 def test_memory_page_renders_pending_and_approved_memory(client, app):
+    """Ensure the memory page renders pending and approved entries."""
     register(client)
     with app.app_context():
         user_id = User.query.filter_by(email="user@example.com").one().id
@@ -57,6 +59,7 @@ def test_memory_page_renders_pending_and_approved_memory(client, app):
 
 
 def test_rag_memory_search_returns_relevant_approved_memory(app):
+    """Ensure retrieval ranks a relevant approved memory for its owner."""
     with app.app_context():
         first = LongTermMemory(
             user_id=42,

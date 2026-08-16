@@ -17,7 +17,10 @@ USER_AGENT = "LangGraphChatbot/1.0 (+https://duckduckgo.com)"
 
 
 class ReadableHTMLParser(HTMLParser):
+    """Extract page metadata and readable text while skipping noisy elements."""
+
     def __init__(self) -> None:
+        """Initialize empty parser state."""
         super().__init__()
         self.title = ""
         self.description = ""
@@ -26,6 +29,12 @@ class ReadableHTMLParser(HTMLParser):
         self._chunks: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Track readable blocks, metadata, and skipped elements.
+
+        Args:
+            tag: Lower- or mixed-case HTML element name.
+            attrs: Element attributes supplied by :class:`HTMLParser`.
+        """
         tag = tag.lower()
         attrs_dict = {name.lower(): value or "" for name, value in attrs}
         if tag in {"script", "style", "svg", "noscript"}:
@@ -38,6 +47,11 @@ class ReadableHTMLParser(HTMLParser):
             self._chunks.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
+        """Close tracked sections and add readable block boundaries.
+
+        Args:
+            tag: Lower- or mixed-case HTML element name.
+        """
         tag = tag.lower()
         if tag in {"script", "style", "svg", "noscript"} and self._skip_depth:
             self._skip_depth -= 1
@@ -47,6 +61,11 @@ class ReadableHTMLParser(HTMLParser):
             self._chunks.append("\n")
 
     def handle_data(self, data: str) -> None:
+        """Collect visible text outside skipped elements.
+
+        Args:
+            data: Text node reported by :class:`HTMLParser`.
+        """
         if self._skip_depth:
             return
         text = unescape(data).strip()
@@ -59,11 +78,20 @@ class ReadableHTMLParser(HTMLParser):
 
     @property
     def text(self) -> str:
+        """Return normalized readable page text."""
         return normalize_text(" ".join(self._chunks))
 
 
 def resolve_web_link(url: str, question: str = "") -> str:
-    """Fetch a public web page and return readable content relevant to the question."""
+    """Fetch a public web page and extract question-relevant content.
+
+    Args:
+        url: Public HTTP or HTTPS URL.
+        question: Optional question used to rank excerpts.
+
+    Returns:
+        Readable source metadata and content, or a safe error message.
+    """
     if not url:
         return "No URL was provided."
     try:
@@ -98,6 +126,18 @@ def resolve_web_link(url: str, question: str = "") -> str:
 
 
 def fetch_public_url(url: str) -> tuple[str, str, str]:
+    """Fetch a bounded response after validating every redirect target.
+
+    Args:
+        url: User-supplied public URL.
+
+    Returns:
+        Final URL, normalized content type, and decoded response body.
+
+    Raises:
+        ValueError: If the URL or response violates resolver safety limits.
+        requests.RequestException: If the remote request fails.
+    """
     current_url = normalize_url(url)
     session = requests.Session()
     for _ in range(MAX_REDIRECTS + 1):
@@ -126,6 +166,14 @@ def fetch_public_url(url: str) -> tuple[str, str, str]:
 
 
 def normalize_url(url: str) -> str:
+    """Trim a URL and add HTTPS when its scheme is omitted.
+
+    Args:
+        url: User-supplied URL.
+
+    Returns:
+        A normalized absolute-looking URL.
+    """
     parsed = urlparse(url.strip())
     if not parsed.scheme:
         return f"https://{url.strip()}"
@@ -133,6 +181,15 @@ def normalize_url(url: str) -> str:
 
 
 def validate_public_url(url: str) -> None:
+    """Reject URL targets that resolve to local or non-public networks.
+
+    Args:
+        url: URL to validate before a request.
+
+    Raises:
+        ValueError: If the URL is malformed, unsupported, unresolvable, or
+            points to a non-public address.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("only http and https URLs can be resolved")
@@ -159,13 +216,33 @@ def validate_public_url(url: str) -> None:
 
 
 def is_supported_content_type(content_type: str) -> bool:
-    return (
-        content_type.startswith("text/")
-        or content_type in {"application/json", "application/xml", "application/xhtml+xml"}
-    )
+    """Return whether a response content type can be read as text.
+
+    Args:
+        content_type: Lowercase media type without parameters.
+
+    Returns:
+        Whether the resolver supports the media type.
+    """
+    return content_type.startswith("text/") or content_type in {
+        "application/json",
+        "application/xml",
+        "application/xhtml+xml",
+    }
 
 
 def read_limited_response(response: requests.Response) -> bytes:
+    """Read a streamed response without exceeding the download limit.
+
+    Args:
+        response: Streaming Requests response.
+
+    Returns:
+        Complete response bytes within the configured limit.
+
+    Raises:
+        ValueError: If the response exceeds ``MAX_DOWNLOAD_BYTES``.
+    """
     chunks: list[bytes] = []
     total = 0
     for chunk in response.iter_content(chunk_size=16_384):
@@ -179,13 +256,23 @@ def read_limited_response(response: requests.Response) -> bytes:
 
 
 def select_relevant_excerpts(text: str, question: str) -> str:
+    """Select text passages that overlap meaningful question terms.
+
+    Args:
+        text: Normalized readable source text.
+        question: User question used to rank passages.
+
+    Returns:
+        Selected passages bounded by ``MAX_RESULT_CHARS``.
+    """
     paragraphs = [part.strip() for part in re.split(r"\n+|(?<=[.!?])\s+", text) if part.strip()]
     if not paragraphs:
         return ""
     terms = {
         term
         for term in re.findall(r"[a-zA-Z0-9]{3,}", question.lower())
-        if term not in {"the", "and", "for", "with", "that", "this", "from", "what", "when", "where"}
+        if term
+        not in {"the", "and", "for", "with", "that", "this", "from", "what", "when", "where"}
     }
     if not terms:
         return "\n\n".join(paragraphs[:12])[:MAX_RESULT_CHARS]
@@ -202,6 +289,14 @@ def select_relevant_excerpts(text: str, question: str) -> str:
 
 
 def normalize_text(text: str) -> str:
+    """Collapse noisy whitespace while preserving paragraph boundaries.
+
+    Args:
+        text: Source text.
+
+    Returns:
+        Normalized text without surrounding whitespace.
+    """
     text = re.sub(r"[ \t\r\f\v]+", " ", text or "")
     text = re.sub(r"\n\s*\n\s*", "\n\n", text)
     return text.strip()

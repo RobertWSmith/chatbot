@@ -8,10 +8,21 @@ load_dotenv()
 
 
 def env_flag(name: str, default: str = "0") -> bool:
+    """Read a conventional boolean value from the environment.
+
+    Args:
+        name: Environment variable name.
+        default: Value to parse when the variable is unset.
+
+    Returns:
+        ``True`` for common enabled values; otherwise ``False``.
+    """
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class Config:
+    """Default application configuration sourced from the environment."""
+
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
     SQLALCHEMY_DATABASE_URI = os.getenv(
         "DATABASE_URL",
@@ -36,11 +47,13 @@ class Config:
         "LANGGRAPH_DATABASE_URL",
         "postgresql://postgres:postgres@localhost:5432/langgraph_chat?sslmode=disable",
     )
-    LANGGRAPH_SETUP_SCHEMA = os.getenv("LANGGRAPH_SETUP_SCHEMA", "0") == "1"
-    DEBUG = os.getenv("FLASK_DEBUG", "0") == "1"
+    LANGGRAPH_SETUP_SCHEMA = env_flag("LANGGRAPH_SETUP_SCHEMA")
+    DEBUG = env_flag("FLASK_DEBUG")
 
 
 class TestConfig(Config):
+    """Isolated configuration for tests that do not call external services."""
+
     TESTING = True
     WTF_CSRF_ENABLED = False
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"

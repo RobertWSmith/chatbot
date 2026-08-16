@@ -4,6 +4,7 @@ from app.services import web_resolver
 
 
 def test_resolve_web_link_extracts_relevant_html(monkeypatch):
+    """Ensure HTML metadata and question-relevant text are extracted."""
     html = """
     <html>
       <head>
@@ -48,5 +49,6 @@ def test_resolve_web_link_extracts_relevant_html(monkeypatch):
     ],
 )
 def test_validate_public_url_blocks_local_targets(url):
+    """Ensure the resolver rejects non-public URL targets."""
     with pytest.raises(ValueError):
         web_resolver.validate_public_url(url)
