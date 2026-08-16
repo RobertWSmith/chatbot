@@ -86,6 +86,16 @@ accounts can instead be promoted by setting `users.is_platform_admin` directly. 
    `POST /api/admin/mcp-namespaces`, then grants it using
    `PUT /api/admin/groups/<group-id>/mcp-namespaces/<namespace>`.
 
+Platform administrators can also open `/admin/mcp` to view the server inventory and add
+remote MCP servers through the admin UI. MCP request and response payloads are validated
+with Pydantic; bearer tokens are still referenced by environment-variable name and are
+never submitted to or stored by the application.
+
+`PLATFORM_ADMIN_EMAILS` is also checked when an authenticated user opens an admin route,
+so an existing account becomes an administrator after its email is added and the Flask
+process is restarted. Other signed-in users see an access screen with a link to switch
+accounts instead of Flask's generic forbidden page.
+
 Example namespace request:
 
 ```json

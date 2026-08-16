@@ -5,10 +5,18 @@ import re
 import secrets
 from datetime import timedelta, timezone
 from functools import wraps
-from urllib.parse import urlparse
 
-from flask import Blueprint, abort, jsonify, request, url_for
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    jsonify,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -23,23 +31,54 @@ from app.models import (
 )
 from app.services.mcp_access import accessible_mcp_namespaces
 
+from .schemas import (
+    ErrorResponse,
+    MCPNamespaceCreate,
+    MCPNamespaceEnvelope,
+    MCPNamespaceListResponse,
+    MCPNamespaceResponse,
+)
+
 bp = Blueprint("tenancy", __name__)
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
-_NAMESPACE_PATTERN = re.compile(r"^[a-z][a-z0-9]{1,30}$")
-_ENV_VAR_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-_ALLOWED_TRANSPORTS = {"http", "streamable_http", "sse"}
-_SECRET_HEADERS = {"authorization", "cookie", "proxy-authorization"}
 
 
 def platform_admin_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
+        if (
+            not current_user.is_platform_admin
+            and current_user.email.lower()
+            in current_app.config.get("PLATFORM_ADMIN_EMAILS", ())
+        ):
+            current_user.is_platform_admin = True
+            db.session.commit()
         if not current_user.is_platform_admin:
-            abort(403)
+            if request.path.startswith("/api/"):
+                response = ErrorResponse(error="Platform administrator access is required.")
+                return jsonify(response.model_dump(mode="json")), 403
+            return render_template("errors/admin_forbidden.html"), 403
         return view(*args, **kwargs)
 
     return login_required(wrapped)
+
+
+@bp.get("/admin/mcp")
+@platform_admin_required
+def admin_mcp_page():
+    namespaces = MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all()
+    return render_template("admin/mcp.html", namespaces=namespaces)
+
+
+@bp.get("/api/admin/mcp-namespaces")
+@platform_admin_required
+def list_mcp_namespaces():
+    namespaces = MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all()
+    response = MCPNamespaceListResponse(
+        mcp_namespaces=[_admin_namespace_model(item) for item in namespaces]
+    )
+    return jsonify(response.model_dump(mode="json"))
 
 
 @bp.get("/api/groups")
@@ -252,36 +291,21 @@ def list_my_mcp_namespaces():
 @bp.post("/api/admin/mcp-namespaces")
 @platform_admin_required
 def create_mcp_namespace():
-    payload = request.get_json(silent=True) or {}
-    namespace = str(payload.get("namespace") or "").strip().lower()
-    display_name = str(payload.get("display_name") or namespace).strip()
-    description = str(payload.get("description") or "").strip()
-    transport = str(payload.get("transport") or "http").strip().lower()
-    url = str(payload.get("url") or "").strip()
-    auth_token_env_var = str(payload.get("auth_token_env_var") or "").strip() or None
-    headers = payload.get("headers") or {}
-
-    error = _validate_namespace_payload(
-        namespace,
-        display_name,
-        transport,
-        url,
-        auth_token_env_var,
-        headers,
-    )
-    if error:
-        return jsonify({"error": error}), 400
-    if MCPNamespace.query.filter_by(namespace=namespace).first():
+    try:
+        payload = MCPNamespaceCreate.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as exc:
+        return jsonify({"error": _pydantic_error_message(exc)}), 400
+    if MCPNamespace.query.filter_by(namespace=payload.namespace).first():
         return jsonify({"error": "That MCP namespace already exists."}), 409
 
     item = MCPNamespace(
-        namespace=namespace,
-        display_name=display_name,
-        description=description,
-        transport=transport,
-        url=url,
-        auth_token_env_var=auth_token_env_var,
-        headers=headers,
+        namespace=payload.namespace,
+        display_name=payload.display_name,
+        description=payload.description,
+        transport=payload.transport,
+        url=str(payload.url),
+        auth_token_env_var=payload.auth_token_env_var,
+        headers=payload.headers,
     )
     db.session.add(item)
     try:
@@ -289,7 +313,8 @@ def create_mcp_namespace():
     except IntegrityError:
         db.session.rollback()
         return jsonify({"error": "That MCP namespace already exists."}), 409
-    return jsonify({"mcp_namespace": _admin_namespace_json(item)}), 201
+    response = MCPNamespaceEnvelope(mcp_namespace=_admin_namespace_model(item))
+    return jsonify(response.model_dump(mode="json")), 201
 
 
 @bp.put("/api/admin/groups/<group_id>/mcp-namespaces/<namespace>")
@@ -357,42 +382,23 @@ def _is_expired(expires_at) -> bool:
     return expires_at <= utcnow()
 
 
-def _validate_namespace_payload(
-    namespace: str,
-    display_name: str,
-    transport: str,
-    url: str,
-    auth_token_env_var: str | None,
-    headers: object,
-) -> str | None:
-    if not _NAMESPACE_PATTERN.fullmatch(namespace):
-        return "Namespace must be 2-31 lowercase letters or numbers and start with a letter."
-    if not display_name or len(display_name) > 120:
-        return "Display name must be between 1 and 120 characters."
-    if transport not in _ALLOWED_TRANSPORTS:
-        return "Transport must be http, streamable_http, or sse."
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return "MCP URL must be an absolute HTTP or HTTPS URL."
-    if auth_token_env_var and not _ENV_VAR_PATTERN.fullmatch(auth_token_env_var):
-        return "auth_token_env_var must be a valid uppercase environment variable name."
-    if not isinstance(headers, dict) or any(
-        not isinstance(key, str) or not isinstance(value, str) for key, value in headers.items()
-    ):
-        return "Headers must be an object containing string values."
-    if any(key.lower() in _SECRET_HEADERS for key in headers):
-        return "Secret authentication headers must use auth_token_env_var."
-    return None
+def _admin_namespace_model(item: MCPNamespace) -> MCPNamespaceResponse:
+    return MCPNamespaceResponse(
+        namespace=item.namespace,
+        display_name=item.display_name,
+        description=item.description,
+        transport=item.transport,
+        url=item.url,
+        auth_token_env_var=item.auth_token_env_var,
+        headers=item.headers,
+        enabled=item.enabled,
+        group_grant_count=len(item.group_grants),
+        created_at=item.created_at,
+    )
 
 
-def _admin_namespace_json(item: MCPNamespace) -> dict:
-    return {
-        "namespace": item.namespace,
-        "display_name": item.display_name,
-        "description": item.description,
-        "transport": item.transport,
-        "url": item.url,
-        "auth_token_env_var": item.auth_token_env_var,
-        "headers": item.headers,
-        "enabled": item.enabled,
-    }
+def _pydantic_error_message(exc: ValidationError) -> str:
+    error = exc.errors(include_url=False)[0]
+    location = ".".join(str(part) for part in error["loc"])
+    message = str(error["msg"])
+    return f"{location}: {message}" if location else message

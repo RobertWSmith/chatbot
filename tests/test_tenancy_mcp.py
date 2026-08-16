@@ -135,6 +135,100 @@ def test_only_platform_admin_can_create_and_grant_namespace(client, app):
     ]
 
 
+def test_platform_admin_can_open_mcp_admin_and_list_namespaces(client, app):
+    register(client, email="admin@example.com")
+    with app.app_context():
+        user = User.query.filter_by(email="admin@example.com").one()
+        user.is_platform_admin = True
+        db.session.add(_namespace("billing"))
+        db.session.commit()
+    client.get("/logout")
+    _login(client, "admin@example.com")
+
+    page = client.get("/admin/mcp")
+    response = client.get("/api/admin/mcp-namespaces")
+
+    assert page.status_code == 200
+    assert b"MCP servers" in page.data
+    assert b"mcp_billing" in page.data
+    assert response.status_code == 200
+    assert response.get_json()["mcp_namespaces"][0]["namespace"] == "billing"
+
+
+def test_mcp_admin_page_explains_access_to_non_admin_users(client):
+    register(client)
+
+    page = client.get("/admin/mcp")
+    api_response = client.get("/api/admin/mcp-namespaces")
+
+    assert page.status_code == 403
+    assert b"Platform admin access required" in page.data
+    assert b"user@example.com" in page.data
+    assert b"Sign out and use another account" in page.data
+    assert api_response.status_code == 403
+    assert api_response.get_json() == {
+        "error": "Platform administrator access is required."
+    }
+
+
+def test_configured_existing_user_is_promoted_on_admin_request(client, app):
+    app.config["PLATFORM_ADMIN_EMAILS"] = ()
+    register(client, email="configured-admin@example.com")
+    with app.app_context():
+        user = User.query.filter_by(email="configured-admin@example.com").one()
+        assert user.is_platform_admin is False
+
+    app.config["PLATFORM_ADMIN_EMAILS"] = ("configured-admin@example.com",)
+    response = client.get("/admin/mcp")
+
+    assert response.status_code == 200
+    with app.app_context():
+        user = User.query.filter_by(email="configured-admin@example.com").one()
+        assert user.is_platform_admin is True
+
+
+def test_anonymous_admin_request_redirects_to_login(client):
+    response = client.get("/admin/mcp")
+
+    assert response.status_code == 302
+    assert "/login?next=%2Fadmin%2Fmcp" in response.headers["Location"]
+
+
+def test_mcp_admin_create_uses_pydantic_for_input_and_output(client, app):
+    register(client, email="admin@example.com")
+    with app.app_context():
+        user = User.query.filter_by(email="admin@example.com").one()
+        user.is_platform_admin = True
+        db.session.commit()
+    client.get("/logout")
+    _login(client, "admin@example.com")
+
+    invalid = client.post(
+        "/api/admin/mcp-namespaces",
+        json={
+            "namespace": "billing",
+            "url": "https://mcp.example.com/tools",
+            "headers": {"Authorization": "not-allowed"},
+        },
+    )
+    created = client.post(
+        "/api/admin/mcp-namespaces",
+        json={
+            "namespace": "Billing",
+            "display_name": "Billing",
+            "url": "https://mcp.example.com/tools",
+        },
+    )
+
+    assert invalid.status_code == 400
+    assert "auth_token_env_var" in invalid.get_json()["error"]
+    assert created.status_code == 201
+    payload = created.get_json()["mcp_namespace"]
+    assert payload["namespace"] == "billing"
+    assert payload["group_grant_count"] == 0
+    assert payload["created_at"]
+
+
 def test_mcp_loader_isolates_namespace_failures_and_marks_tools(app, monkeypatch):
     with app.app_context():
         user = _user("tools@example.com")

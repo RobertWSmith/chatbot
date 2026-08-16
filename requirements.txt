@@ -10,6 +10,7 @@ gunicorn==23.0.0
 python-dotenv==1.0.1
 psycopg[binary,pool]==3.3.4
 pgvector==0.4.1
+pydantic==2.13.4
 langchain==1.2.15
 langchain-community==0.4.1
 langchain-openai==1.1.12

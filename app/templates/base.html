@@ -35,19 +35,22 @@
   </head>
   <body class="min-h-screen bg-slate-50 text-slate-950 antialiased dark:bg-slate-950 dark:text-slate-100">
     <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
-      <div class="mx-auto flex h-16 max-w-screen-2xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+      <div class="site-header-inner mx-auto flex h-16 max-w-screen-2xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <a class="flex items-center gap-3 text-slate-950 no-underline dark:text-white" href="{{ url_for('chat.chat_home') }}">
           <span class="grid h-9 w-9 place-items-center rounded-lg bg-brand text-sm font-black text-white shadow-sm">LC</span>
-          <span class="min-w-0">
+          <span class="brand-copy min-w-0">
             <span class="block text-sm font-semibold leading-5">LangGraph Chat</span>
             <span class="hidden text-xs text-slate-500 sm:block dark:text-slate-400">Memory-aware assistant workspace</span>
           </span>
         </a>
-        <nav class="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 p-1 text-sm dark:border-slate-800 dark:bg-slate-900">
+        <nav class="app-nav flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 p-1 text-sm dark:border-slate-800 dark:bg-slate-900">
         {% if current_user.is_authenticated %}
           <a class="nav-link {% if request.endpoint in ['chat.chat_home', 'chat.chat_thread'] %}active{% endif %}" href="{{ url_for('chat.chat_home') }}">Chat</a>
           <a class="nav-link {% if request.endpoint == 'memory.memory_page' %}active{% endif %}" href="{{ url_for('memory.memory_page') }}">Memory</a>
           <a class="nav-link {% if request.endpoint == 'settings.settings_page' %}active{% endif %}" href="{{ url_for('settings.settings_page') }}">Settings</a>
+          {% if current_user.is_platform_admin %}
+          <a class="nav-link {% if request.endpoint == 'tenancy.admin_mcp_page' %}active{% endif %}" href="{{ url_for('tenancy.admin_mcp_page') }}">MCP</a>
+          {% endif %}
           <a class="nav-link" href="{{ url_for('auth.logout') }}">Log out</a>
         {% else %}
           <a class="nav-link {% if request.endpoint == 'auth.login' %}active{% endif %}" href="{{ url_for('auth.login') }}">Log in</a>
