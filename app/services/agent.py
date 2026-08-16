@@ -119,19 +119,15 @@ def _build_chat_model(settings: dict, *, provider_reasoning: bool):
 
     from langchain_openai import ChatOpenAI
 
-    model_kwargs: dict[str, Any] = {}
-    if provider_reasoning:
-        model_kwargs["reasoning"] = {
-            "effort": settings["reasoning_effort"],
-            "summary": "auto" if settings.get("reasoning_summaries_enabled") else None,
-        }
-
     kwargs: dict[str, Any] = {
         "model": settings["model_name"],
         "api_key": current_app.config.get("OPENAI_API_KEY") or None,
     }
-    if model_kwargs:
-        kwargs["model_kwargs"] = model_kwargs
+    if provider_reasoning:
+        kwargs["reasoning"] = {
+            "effort": settings["reasoning_effort"],
+            "summary": "auto" if settings.get("reasoning_summaries_enabled") else None,
+        }
     return ChatOpenAI(**kwargs)
 
 
