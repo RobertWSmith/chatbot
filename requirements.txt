@@ -17,6 +17,7 @@ langchain-openai==1.1.12
 langchain-mcp-adapters==0.3.1
 mcp>=1.28.1,<2
 langgraph==1.1.10
+langgraph-checkpoint==4.1.0
 langgraph-checkpoint-postgres==3.0.5
 duckduckgo-search==8.1.1
 ddgs==9.14.2
