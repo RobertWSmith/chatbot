@@ -1,7 +1,66 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flask-langgraph-chatbot"
+version = "0.2.0"
+description = "A Flask chatbot with LangGraph, Postgres persistence, and multi-tenant MCP access."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "Flask==3.1.0",
+    "Flask-Login==0.6.3",
+    "Flask-Migrate==4.1.0",
+    "Flask-SQLAlchemy==3.1.1",
+    "Flask-WTF==1.2.2",
+    "WTForms==3.2.1",
+    "argon2-cffi==23.1.0",
+    "email-validator==2.2.0",
+    "gunicorn==23.0.0",
+    "python-dotenv==1.0.1",
+    "psycopg[binary,pool]==3.3.4",
+    "pgvector==0.4.1",
+    "pydantic==2.13.4",
+    "langchain==1.2.15",
+    "langchain-community==0.4.1",
+    "langchain-openai==1.1.12",
+    "langchain-mcp-adapters==0.3.1",
+    "mcp>=1.28.1,<2",
+    "langgraph==1.1.10",
+    "langgraph-checkpoint==4.1.0",
+    "langgraph-checkpoint-postgres==3.0.5",
+    "duckduckgo-search==8.1.1",
+    "ddgs==9.14.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black==26.5.1",
+    "pytest==8.3.3",
+    "coverage==7.15.4",
+    "ruff==0.16.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = [
+    "static/css/*.css",
+    "static/js/*.js",
+    "templates/*.html",
+    "templates/*/*.html",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
 
 [tool.ruff]
 line-length = 100

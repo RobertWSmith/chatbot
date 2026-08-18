@@ -11,9 +11,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -r requirements.txt
+COPY pyproject.toml README.md ./
+COPY app ./app
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install .
 
 COPY . .
 

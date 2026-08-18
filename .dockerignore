@@ -6,7 +6,10 @@ __pycache__
 *.pyc
 *.pyo
 *.pyd
+*.egg-info
 .coverage
 htmlcov
+build
+dist
 instance
 .idea

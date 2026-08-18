@@ -158,6 +158,7 @@ def test_platform_admin_can_open_mcp_admin_and_list_namespaces(client, app):
     assert page.status_code == 200
     assert b"MCP servers" in page.data
     assert b"mcp_billing" in page.data
+    assert b'<script type="module" src="/static/js/admin-mcp.js"></script>' in page.data
     assert response.status_code == 200
     assert response.get_json()["mcp_namespaces"][0]["namespace"] == "billing"
 

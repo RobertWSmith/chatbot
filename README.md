@@ -5,11 +5,13 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
 ## Quick Start
 
 1. Create and activate a Python 3.11+ virtual environment.
-2. Install dependencies:
+2. Install the project and its development dependencies:
 
    ```powershell
-   pip install -r requirements.txt
+   pip install -e ".[dev]"
    ```
+
+   For a production-only installation, use `pip install .` instead.
 
 3. Copy `.env.example` to `.env` and set:
 
@@ -48,7 +50,7 @@ Run the complete suite from the project root:
 python -m coverage run -m pytest
 python -m coverage report
 python -m ruff check .
-python -m ruff format --check .
+python -m black --check .
 ```
 
 The tests exercise authentication and password migration, chat streaming and telemetry,

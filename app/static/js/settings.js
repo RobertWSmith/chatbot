@@ -1,3 +1,5 @@
+import { jsonHeaders } from "./app.js";
+
 const form = document.querySelector("#settings-form");
 const statusNode = document.querySelector("#settings-status");
 
@@ -21,7 +23,7 @@ if (form) {
     });
     const response = await fetch("/api/settings", {
       method: "PATCH",
-      headers: window.chatApp.jsonHeaders(),
+      headers: jsonHeaders(),
       body: JSON.stringify(data),
     });
     if (response.ok) {
