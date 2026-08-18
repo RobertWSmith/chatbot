@@ -85,7 +85,17 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
     """
     namespaces = accessible_mcp_namespaces(user_id)
     if not namespaces:
+        logger.info(
+            "event=mcp.discovery.skipped user_id=%s reason=no_authorized_namespaces",
+            user_id,
+        )
         return MCPToolLoadResult([], (), ())
+
+    logger.info(
+        "event=mcp.discovery.start user_id=%s namespaces=%s",
+        user_id,
+        ",".join(item.namespace for item in namespaces),
+    )
 
     results = await asyncio.gather(
         *(_load_namespace_tools(item) for item in namespaces),
@@ -99,7 +109,8 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
     for item, result in zip(namespaces, results, strict=True):
         if isinstance(result, BaseException):
             logger.warning(
-                "MCP namespace %s could not be loaded: %s",
+                "event=mcp.namespace.error user_id=%s namespace=%s error_type=%s",
+                user_id,
                 item.namespace,
                 type(result).__name__,
             )
@@ -119,6 +130,14 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
             }
             tools.append(tool)
 
+    logger.info(
+        "event=mcp.discovery.complete user_id=%s loaded_namespaces=%s "
+        "unavailable_namespaces=%s tools=%s",
+        user_id,
+        ",".join(loaded) or "none",
+        ",".join(unavailable) or "none",
+        ",".join(tool.name for tool in tools) or "none",
+    )
     return MCPToolLoadResult(tools, tuple(loaded), tuple(unavailable))
 
 
@@ -138,7 +157,22 @@ async def _load_namespace_tools(item: MCPNamespace) -> list[Any]:
         {server_name: _connection_config(item)},
         tool_name_prefix=True,
     )
-    return await client.get_tools(server_name=server_name)
+    parsed = urlparse(item.url)
+    endpoint = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    logger.info(
+        "event=mcp.namespace.connect namespace=%s transport=%s endpoint=%s",
+        item.namespace,
+        item.transport,
+        endpoint,
+    )
+    tools = await client.get_tools(server_name=server_name)
+    logger.info(
+        "event=mcp.namespace.tools_loaded namespace=%s tool_count=%s tools=%s",
+        item.namespace,
+        len(tools),
+        ",".join(tool.name for tool in tools) or "none",
+    )
+    return tools
 
 
 def _connection_config(item: MCPNamespace) -> dict[str, Any]:

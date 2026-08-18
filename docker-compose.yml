@@ -17,13 +17,54 @@ services:
       MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}
       MEMORY_EMBEDDING_DIMENSIONS: ${MEMORY_EMBEDDING_DIMENSIONS:-1536}
       CONVERSATION_HISTORY_LIMIT: ${CONVERSATION_HISTORY_LIMIT:-24}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TOOL_CALL_LOG_ARGUMENTS: ${TOOL_CALL_LOG_ARGUMENTS:-0}
       PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+      MCP_PORTAL_INTERNAL_URL: http://mcp-portal:8001/mcp
       # Add namespace bearer tokens here, for example:
       # BILLING_MCP_TOKEN: ${BILLING_MCP_TOKEN:-}
       FLASK_DEBUG: "0"
     depends_on:
       db:
         condition: service_healthy
+      mcp-portal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp-portal:
+    build:
+      context: ../mcp-portal
+      dockerfile: ../chatbot/Dockerfile.mcp-portal
+    ports:
+      - "127.0.0.1:${MCP_PORTAL_HOST_PORT:-8001}:8001"
+    environment:
+      MCP_PORTAL_INTERNAL_URL: http://mcp-portal:8001/mcp
+      MCP_PORTAL_HOST_URL: http://localhost:${MCP_PORTAL_HOST_PORT:-8001}/mcp
+      MCP_PORTAL_HTTP_PATH: /mcp
+      MCP_PORTAL_HEALTH_PATH: /healthz
+      MCP_PORTAL_READINESS_PATH: /readyz
+      MCP_PORTAL_MODEL_PROVIDER: ${MCP_PORTAL_MODEL_PROVIDER:-openai}
+      MCP_PORTAL_DATABASE_PROVIDER: ${MCP_PORTAL_DATABASE_PROVIDER:-none}
+      MCP_PORTAL_AUTH_PROVIDER: ${MCP_PORTAL_AUTH_PROVIDER:-none}
+      MCP_PORTAL_PRODUCTION_REQUIRE_AUTH: ${MCP_PORTAL_PRODUCTION_REQUIRE_AUTH:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "MCP Portal internal URL (use from chatbot): $$MCP_PORTAL_INTERNAL_URL"
+        echo "MCP Portal host URL: $$MCP_PORTAL_HOST_URL"
+        exec mcp-portal --production --transport streamable-http --host 0.0.0.0 --port 8001 --path /mcp --no-banner
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3)
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
 
   db:

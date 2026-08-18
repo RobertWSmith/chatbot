@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Generator
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from app.models import ChatMessage, ChatThread, MessageTelemetry, User, utcnow
 from app.services.agent import stream_agent_response
 
 bp = Blueprint("chat", __name__)
+logger = logging.getLogger(__name__)
 
 
 @bp.get("/chat")
@@ -58,9 +60,11 @@ def send_message(thread_id: str):
     if not prompt:
         return jsonify({"error": "Message is required."}), 400
 
+    user_id = current_user.id
+    persisted_thread_id = thread.id
     user_message = ChatMessage(
-        thread_id=thread.id,
-        user_id=current_user.id,
+        thread_id=persisted_thread_id,
+        user_id=user_id,
         role="user",
         content=prompt,
     )
@@ -71,8 +75,8 @@ def send_message(thread_id: str):
     db.session.add(
         MessageTelemetry(
             message_id=user_message.id,
-            user_id=current_user.id,
-            thread_id=thread.id,
+            user_id=user_id,
+            thread_id=persisted_thread_id,
             role=user_message.role,
             request_received_at=request_received_at,
             message_persisted_at=utcnow(),
@@ -84,8 +88,8 @@ def send_message(thread_id: str):
     return Response(
         stream_with_context(
             _generate_response(
-                current_user._get_current_object(),
-                thread,
+                user_id,
+                persisted_thread_id,
                 prompt,
                 request_received_at,
             )
@@ -96,16 +100,16 @@ def send_message(thread_id: str):
 
 
 def _generate_response(
-    user: User,
-    thread: ChatThread,
+    user_id: int,
+    thread_id: str,
     prompt: str,
     request_received_at: datetime,
 ) -> Generator[str, None, None]:
     """Stream agent events and persist the completed assistant message.
 
     Args:
-        user: Authenticated user sending the message.
-        thread: Chat thread receiving the response.
+        user_id: Authenticated user's primary key.
+        thread_id: Primary key of the user-owned chat thread.
         prompt: Plain-text user prompt.
         request_received_at: Timestamp captured when the request began.
 
@@ -118,6 +122,11 @@ def _generate_response(
     first_token_at = None
     token_count = 0
     try:
+        user = db.session.get(User, user_id)
+        thread = db.session.get(ChatThread, thread_id)
+        if user is None or thread is None or thread.user_id != user_id:
+            raise RuntimeError("The chat context is no longer available.")
+
         for event in stream_agent_response(user, thread, prompt):
             if event["type"] == "token":
                 token_count += 1
@@ -137,11 +146,12 @@ def _generate_response(
         )
         db.session.add(assistant_message)
         db.session.flush()
+        assistant_message_id = assistant_message.id
         db.session.add(
             MessageTelemetry(
-                message_id=assistant_message.id,
-                user_id=user.id,
-                thread_id=thread.id,
+                message_id=assistant_message_id,
+                user_id=user_id,
+                thread_id=thread_id,
                 role=assistant_message.role,
                 request_received_at=request_received_at,
                 message_persisted_at=utcnow(),
@@ -156,12 +166,18 @@ def _generate_response(
             "done",
             {
                 "type": "done",
-                "message_id": assistant_message.id,
-                "thread_id": thread.id,
+                "message_id": assistant_message_id,
+                "thread_id": thread_id,
             },
         )
-    except Exception as exc:  # noqa: BLE001 - stream failures must become SSE error events.
+    except Exception as exc:
         db.session.rollback()
+        logger.exception(
+            "event=chat.stream.error user_id=%s thread_id=%s error_type=%s",
+            user_id,
+            thread_id,
+            type(exc).__name__,
+        )
         yield _sse("error", {"type": "error", "message": str(exc)})
 
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import AsyncGenerator, Generator, Iterable
 from typing import Any, TypedDict
 
-from flask import current_app
+from flask import current_app, has_app_context
 
 from app.extensions import db
 from app.models import ChatMessage, ChatThread, PendingMemory, User
@@ -19,7 +20,8 @@ from app.services.mcp_access import (
     load_authorized_mcp_tools,
 )
 from app.services.rag_memory import format_memory_search_results, search_long_term_memories
-from app.services.web_resolver import resolve_web_link as fetch_web_link
+
+logger = logging.getLogger(__name__)
 
 
 def stream_agent_response(
@@ -38,13 +40,29 @@ def stream_agent_response(
     settings = user.settings.merged()
     messages = _conversation_messages(user, thread, prompt)
     if not current_app.config.get("OPENAI_API_KEY"):
+        logger.info(
+            "event=agent.mode user_id=%s thread_id=%s mode=demo "
+            "tool_capable=false reason=missing_openai_api_key",
+            user.id,
+            thread.id,
+        )
         yield from _stream_demo_response(user, thread, prompt, settings, messages)
         return
 
     try:
-        use_custom_graph = current_app.config.get(
-            "CUSTOM_REASONING_GRAPH_ENABLED"
-        ) and not accessible_mcp_namespaces(user.id)
+        authorized_namespaces = accessible_mcp_namespaces(user.id)
+        use_custom_graph = (
+            current_app.config.get("CUSTOM_REASONING_GRAPH_ENABLED") and not authorized_namespaces
+        )
+        logger.info(
+            "event=agent.mode user_id=%s thread_id=%s mode=%s tool_capable=%s "
+            "authorized_mcp_namespaces=%s",
+            user.id,
+            thread.id,
+            "custom_reasoning_graph" if use_custom_graph else "prebuilt_agent",
+            str(not use_custom_graph).lower(),
+            ",".join(item.namespace for item in authorized_namespaces) or "none",
+        )
         if use_custom_graph:
             yield from _stream_custom_reasoning_graph_response(user, thread, messages, settings)
         else:
@@ -90,6 +108,8 @@ async def _astream_langgraph_response(
     from langchain.agents import create_agent
     from langchain.messages import AIMessageChunk
 
+    from app.services.tool_logging import ToolCallLoggingCallback
+
     model = _build_chat_model(settings, provider_reasoning=True)
     user_id = getattr(user, "id", None)
     mcp_result = (
@@ -99,18 +119,41 @@ async def _astream_langgraph_response(
     )
     for namespace in mcp_result.unavailable_namespaces:
         yield {"type": "status", "text": f"MCP namespace {namespace} is unavailable"}
+    memory_tools = _build_agent_tools(user, thread, settings)
+    agent_tools = [*memory_tools, *mcp_result.tools]
+    logger.info(
+        "event=agent.tool_inventory user_id=%s thread_id=%s memory_tools=%s "
+        "mcp_namespaces=%s mcp_tools=%s unavailable_mcp_namespaces=%s",
+        user_id,
+        thread.id,
+        ",".join(tool.name for tool in memory_tools) or "none",
+        ",".join(mcp_result.loaded_namespaces) or "none",
+        ",".join(tool.name for tool in mcp_result.tools) or "none",
+        ",".join(mcp_result.unavailable_namespaces) or "none",
+    )
     agent = create_agent(
         model=model,
-        tools=[*_build_agent_tools(user, thread, settings), *mcp_result.tools],
+        tools=agent_tools,
         store=None,
         system_prompt=_system_prompt(settings, mcp_result.loaded_namespaces),
+    )
+    tool_call_logger = ToolCallLoggingCallback(
+        logger=logger,
+        user_id=user_id,
+        thread_id=str(thread.id),
+        log_arguments=(
+            bool(current_app.config.get("TOOL_CALL_LOG_ARGUMENTS")) if has_app_context() else False
+        ),
     )
 
     yield {"type": "status", "text": "Thinking"}
     stream_kwargs = {
         "stream_mode": ["messages", "updates"],
         "version": "v2",
-        "config": {"configurable": {"thread_id": thread.id}},
+        "config": {
+            "configurable": {"thread_id": thread.id},
+            "callbacks": [tool_call_logger],
+        },
     }
     if hasattr(agent, "astream"):
         chunks = agent.astream({"messages": messages}, **stream_kwargs)
@@ -658,7 +701,7 @@ def _conversation_messages(user: User, thread: ChatThread, prompt: str) -> list[
 
 
 def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[Any]:
-    """Build tools scoped to the authenticated user and thread.
+    """Build memory tools scoped to the authenticated user and thread.
 
     Args:
         user: Authenticated user allowed to invoke the tools.
@@ -666,10 +709,9 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
         settings: Effective user settings controlling tool behavior.
 
     Returns:
-        Memory, web-search, and web-resolution tools.
+        Memory recall and proposal tools.
     """
     from langchain.tools import tool
-    from langchain_community.tools import DuckDuckGoSearchRun
 
     @tool
     def recall_user_memory(query: str) -> str:
@@ -712,28 +754,7 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
         )
         return f"Created memory proposal {proposal.id} for user review."
 
-    @tool
-    def resolve_web_link(url: str, question: str = "") -> str:
-        """Extract relevant readable content from a public web result URL.
-
-        Args:
-            url: Public HTTP or HTTPS result URL.
-            question: Optional question used to select relevant excerpts.
-
-        Returns:
-            Readable source content or a safe resolver error.
-        """
-        return fetch_web_link(url, question)
-
-    web_search = DuckDuckGoSearchRun(
-        name="web_search",
-        description=(
-            "Search DuckDuckGo for current or external web information. "
-            "Use this when the user asks about recent events, facts that may have changed, "
-            "or topics that require sources outside this chatbot's conversation history."
-        ),
-    )
-    return [recall_user_memory, propose_memory, web_search, resolve_web_link]
+    return [recall_user_memory, propose_memory]
 
 
 def _create_memory_proposal(
@@ -823,20 +844,20 @@ def _system_prompt(settings: dict[str, Any], mcp_namespaces: tuple[str, ...] = (
     Returns:
         Complete system instructions for the chat agent.
     """
-    mcp_guidance = ""
+    mcp_guidance = (
+        " No external-data tools are available for this request. Be transparent about that "
+        "limitation when current or external information is required."
+    )
     if mcp_namespaces:
         namespace_list = ", ".join(mcp_namespaces)
         mcp_guidance = (
             f" The authenticated user can use tools from these MCP namespaces: {namespace_list}. "
             "MCP tool names begin with mcp_<namespace>_; select only a tool from the namespace "
-            "that owns the requested data or operation."
+            "that owns the requested data or operation. Use MCP tools for all external data and "
+            "actions; there is no built-in web search or URL-fetching fallback."
         )
     return (
         "You are a helpful chatbot. Respond in clean GitHub-flavored Markdown. "
-        "Use web_search for current events, recently changed facts, or external information "
-        "that is not available from the conversation. Summarize search results plainly and "
-        "include source links when the tool returns them. Use resolve_web_link after web_search "
-        "when a search result needs to be opened to answer the user's specific question. "
         "Use recall_user_memory as a RAG retriever over approved long-term memories "
         "when user-specific remembered context would help. "
         "Use the rolling conversation summary plus prior messages in this thread as "

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from flask import Flask, redirect, url_for
 
 from .config import Config
@@ -20,6 +22,7 @@ def create_app(config_object: type[Config] | None = None, **overrides: object) -
     app.config.from_object(config_object or Config)
     app.config.update(overrides)
 
+    _configure_logging(app)
     _validate_database_url(app)
 
     db.init_app(app)
@@ -61,6 +64,23 @@ def create_app(config_object: type[Config] | None = None, **overrides: object) -
         return redirect(url_for("chat.chat_home"))
 
     return app
+
+
+def _configure_logging(app: Flask) -> None:
+    """Configure application and tool-audit log verbosity.
+
+    Args:
+        app: Flask application whose logger should be configured.
+    """
+    configured_level = str(app.config.get("LOG_LEVEL", "INFO")).upper()
+    level = logging.getLevelNamesMapping().get(configured_level, logging.INFO)
+    app.logger.setLevel(level)
+    logging.getLogger("app").setLevel(level)
+    app.logger.info(
+        "event=app.logging.configured level=%s tool_call_arguments=%s",
+        logging.getLevelName(level),
+        str(bool(app.config.get("TOOL_CALL_LOG_ARGUMENTS"))).lower(),
+    )
 
 
 def _validate_database_url(app: Flask) -> None:

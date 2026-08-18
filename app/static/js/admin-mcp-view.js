@@ -38,6 +38,7 @@ function addMeta(container, label, value) {
 export function renderMcpServer(list, item) {
   const card = document.createElement("article");
   card.className = "admin-server-card";
+  card.dataset.namespace = item.namespace;
   card.dataset.searchValue = [item.display_name, item.namespace, item.description, item.url]
     .join(" ")
     .toLowerCase();
@@ -88,7 +89,15 @@ export function renderMcpServer(list, item) {
   addMeta(meta, "Transport", item.transport.replaceAll("_", " "));
   addMeta(meta, "Authentication", item.auth_token_env_var || "None");
   addMeta(meta, "Headers", String(Object.keys(item.headers || {}).length));
-  addMeta(meta, "Group access", String(item.group_grant_count || 0));
+  const grantCount = document.createElement("span");
+  grantCount.dataset.serverGrantCount = "";
+  const grantCountLabel = document.createElement("strong");
+  grantCountLabel.textContent = "Group access";
+  grantCount.append(
+    grantCountLabel,
+    document.createTextNode(String(item.group_grant_count || 0)),
+  );
+  meta.append(grantCount);
   content.append(meta);
   card.append(mark, content);
   list.append(card);

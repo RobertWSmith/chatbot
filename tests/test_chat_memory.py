@@ -1,5 +1,6 @@
+from app.chat.routes import _generate_response
 from app.extensions import db
-from app.models import ChatMessage, ChatThread, MessageTelemetry, PendingMemory
+from app.models import ChatMessage, ChatThread, MessageTelemetry, PendingMemory, utcnow
 
 from .conftest import register
 
@@ -39,6 +40,31 @@ def test_chat_stream_persists_messages_and_memory_proposal(client, app):
             <= assistant_message.telemetry.completed_at
         )
         assert PendingMemory.query.filter_by(user_id=thread.user_id, status="pending").count() == 1
+
+
+def test_stream_reloads_entities_after_original_session_is_removed(client, app):
+    """Ensure deferred streaming does not depend on request-scoped ORM instances."""
+    register(client)
+    thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+
+    with app.app_context():
+        thread = db.session.get(ChatThread, thread_id)
+        user_id = thread.user_id
+        db.session.remove()
+
+        body = "".join(
+            _generate_response(
+                user_id,
+                thread_id,
+                "Generate a response after the request session closes.",
+                utcnow(),
+            )
+        )
+
+        assert "event: token" in body
+        assert "event: done" in body
+        assert "not bound to a Session" not in body
+        assert ChatMessage.query.filter_by(thread_id=thread_id, role="assistant").count() == 1
 
 
 def test_demo_response_respects_disabled_memory_proposals(client, app):

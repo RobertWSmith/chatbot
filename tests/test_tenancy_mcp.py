@@ -163,6 +163,36 @@ def test_platform_admin_can_open_mcp_admin_and_list_namespaces(client, app):
     assert response.get_json()["mcp_namespaces"][0]["namespace"] == "billing"
 
 
+def test_mcp_admin_page_renders_group_grant_management(client, app):
+    """Ensure the admin screen can create and revoke grants for every tenant group."""
+    register(client, email="admin@example.com")
+    with app.app_context():
+        user = User.query.filter_by(email="admin@example.com").one()
+        user.is_platform_admin = True
+        namespace = _namespace("portal")
+        group = Group(name="Operations", slug="operations", created_by_user_id=None)
+        group.namespace_grants.append(GroupMCPNamespace(mcp_namespace=namespace))
+        db.session.add(group)
+        db.session.commit()
+        group_id = group.id
+    client.get("/logout")
+    _login(client, "admin@example.com")
+
+    page = client.get("/admin/mcp")
+
+    assert page.status_code == 200
+    assert b'id="mcp-grant-form"' in page.data
+    assert b'id="mcp-group-form"' in page.data
+    assert b"Create tenant group" in page.data
+    assert b'name="namespace"' in page.data
+    assert b'value="portal"' in page.data
+    assert b'name="group_id"' in page.data
+    assert f'value="{group_id}"'.encode() in page.data
+    assert b"Operations" in page.data
+    assert b"data-revoke-grant" in page.data
+    assert b"Access is recalculated" in page.data
+
+
 def test_mcp_admin_page_explains_access_to_non_admin_users(client):
     """Ensure non-administrators receive a helpful access-denied page."""
     register(client)

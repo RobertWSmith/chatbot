@@ -44,6 +44,96 @@
     </article>
   </div>
 
+  <section class="admin-panel admin-grant-panel" aria-labelledby="mcp-grant-title">
+    <header class="admin-panel-header">
+      <div>
+        <p class="admin-eyebrow">Authorization</p>
+        <h2 id="mcp-grant-title">Group access</h2>
+        <p>Choose which tenant groups can expose each server's tools to their members.</p>
+      </div>
+      <span class="admin-grant-total"><strong>{{ grant_count }}</strong> active</span>
+    </header>
+
+    <div class="admin-grant-body">
+      <div class="admin-grant-controls">
+        <form id="mcp-grant-form" class="admin-grant-form">
+          <label>MCP server
+            <select name="namespace" required {% if not namespaces %}disabled{% endif %}>
+              <option value="">Select a server</option>
+              {% for item in namespaces %}
+                <option value="{{ item.namespace }}">{{ item.display_name }} · mcp_{{ item.namespace }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Tenant group
+            <select name="group_id" required {% if not groups %}disabled{% endif %}>
+              <option value="">Select a group</option>
+              {% for group in groups %}
+                <option value="{{ group.id }}">{{ group.name }} · {{ group.slug }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="primary" type="submit" {% if not namespaces or not groups %}disabled{% endif %}>
+            Grant access
+          </button>
+          {% if not groups %}
+            <p id="mcp-grant-help" class="admin-grant-help">No tenant groups exist yet. Create one below, then assign server access.</p>
+          {% elif not namespaces %}
+            <p id="mcp-grant-help" class="admin-grant-help">Register an MCP server before assigning group access.</p>
+          {% else %}
+            <p id="mcp-grant-help" class="admin-grant-help">Access is recalculated on the group's next chat message; no restart is needed.</p>
+          {% endif %}
+          <p id="mcp-grant-status" class="admin-form-status" role="status" aria-live="polite"></p>
+        </form>
+
+        <form id="mcp-group-form" class="admin-group-form">
+          <div>
+            <strong>Create tenant group</strong>
+            <span>The signed-in administrator becomes its owner.</span>
+          </div>
+          <label class="sr-only" for="mcp-group-name">Tenant group name</label>
+          <input id="mcp-group-name" name="name" maxlength="120" placeholder="e.g. Personal workspace" required>
+          <button class="secondary" type="submit">Create group</button>
+          <p id="mcp-group-status" class="admin-form-status" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+
+      <div class="admin-grant-current" aria-labelledby="mcp-current-grants-title">
+        <div class="admin-grant-current-heading">
+          <h3 id="mcp-current-grants-title">Current grants</h3>
+          <span>{{ grant_count }}</span>
+        </div>
+        <div id="mcp-grant-list" class="admin-grant-list">
+          {% for item in namespaces %}
+            {% for grant in item.group_grants %}
+              <article class="admin-grant-row">
+                <span class="admin-grant-row-icon" aria-hidden="true">{{ grant.group.name[:1] | upper }}</span>
+                <span class="admin-grant-row-copy">
+                  <strong>{{ grant.group.name }}</strong>
+                  <small>{{ grant.group.slug }} → mcp_{{ item.namespace }}</small>
+                </span>
+                <button
+                  class="secondary admin-revoke-grant"
+                  type="button"
+                  data-revoke-grant
+                  data-group-id="{{ grant.group_id }}"
+                  data-group-name="{{ grant.group.name }}"
+                  data-namespace="{{ item.namespace }}"
+                  data-server-name="{{ item.display_name }}"
+                  aria-label="Revoke {{ grant.group.name }} access to {{ item.display_name }}"
+                >Revoke</button>
+              </article>
+            {% endfor %}
+          {% endfor %}
+        </div>
+        <div id="mcp-grant-empty" class="admin-grant-empty" {% if grant_count %}hidden{% endif %}>
+          <strong>No group access yet</strong>
+          <span>Create a grant to make a server's tools available in chat.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <div class="admin-mcp-layout">
     <section class="admin-panel admin-server-inventory" aria-labelledby="server-inventory-title">
       <header class="admin-panel-header">
@@ -60,7 +150,7 @@
 
       <div id="mcp-server-list" class="admin-server-list">
         {% for item in namespaces %}
-          <article class="admin-server-card" data-search-value="{{ (item.display_name ~ ' ' ~ item.namespace ~ ' ' ~ item.description ~ ' ' ~ item.url) | lower }}">
+          <article class="admin-server-card" data-namespace="{{ item.namespace }}" data-search-value="{{ (item.display_name ~ ' ' ~ item.namespace ~ ' ' ~ item.description ~ ' ' ~ item.url) | lower }}">
             <div class="admin-server-mark" aria-hidden="true">{{ item.display_name[:1] | upper }}</div>
             <div class="admin-server-content">
               <div class="admin-server-title-row">
@@ -81,7 +171,7 @@
                 <span><strong>Transport</strong>{{ item.transport | replace("_", " ") }}</span>
                 <span><strong>Authentication</strong>{{ item.auth_token_env_var or "None" }}</span>
                 <span><strong>Headers</strong>{{ item.headers | length }}</span>
-                <span><strong>Group access</strong>{{ item.group_grants | length }}</span>
+                <span data-server-grant-count><strong>Group access</strong>{{ item.group_grants | length }}</span>
               </div>
             </div>
           </article>

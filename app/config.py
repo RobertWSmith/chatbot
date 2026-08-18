@@ -38,6 +38,8 @@ class Config:
     MEMORY_EMBEDDING_MODEL = os.getenv("MEMORY_EMBEDDING_MODEL", "text-embedding-3-small")
     MEMORY_EMBEDDING_DIMENSIONS = int(os.getenv("MEMORY_EMBEDDING_DIMENSIONS", "1536"))
     CONVERSATION_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "24"))
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+    TOOL_CALL_LOG_ARGUMENTS = env_flag("TOOL_CALL_LOG_ARGUMENTS")
     PLATFORM_ADMIN_EMAILS = tuple(
         email.strip().lower()
         for email in os.getenv("PLATFORM_ADMIN_EMAILS", "").split(",")

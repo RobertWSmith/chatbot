@@ -129,6 +129,35 @@ Example namespace request:
 }
 ```
 
+Docker Compose builds the sibling `../mcp-portal` project and runs it on the shared
+Compose network. Its MCP addresses are:
+
+- From the chatbot container: `http://mcp-portal:8001/mcp`
+- From the host: `http://localhost:8001/mcp` (or the port set by
+  `MCP_PORTAL_HOST_PORT`)
+
+The portal prints both addresses during startup. View them with:
+
+```powershell
+docker compose logs mcp-portal
+```
+
+Configure the chatbot namespace with `streamable_http` (underscore) as the transport:
+
+```json
+{
+  "namespace": "portal",
+  "display_name": "MCP Portal",
+  "transport": "streamable_http",
+  "url": "http://mcp-portal:8001/mcp",
+  "headers": {}
+}
+```
+
+The Compose defaults intentionally use no portal authentication and no portal database
+backend for local development. Configure an authentication provider before exposing the
+portal beyond the local machine or a trusted container network.
+
 Set `BILLING_MCP_TOKEN` in the web process environment. The database stores only that
 environment-variable name, not the bearer token. Only remote HTTP/SSE transports are
 accepted by the application. Loaded tools are prefixed as `mcp_<namespace>_...`, which
@@ -144,3 +173,23 @@ Useful authenticated endpoints:
 
 The optional custom reasoning graph does not implement tool execution. Users who have any
 MCP namespace grants therefore use the standard tool-capable LangGraph agent automatically.
+
+### Tool-call logging
+
+The web process logs the selected agent mode, authorized MCP namespaces, discovered tool
+inventory, and every actual tool start, success, or failure. Follow the audit stream with:
+
+```powershell
+docker compose logs -f web
+```
+
+Look for `event=agent.mode` and `event=agent.tool_inventory` first. An actual invocation
+produces matching `event=tool.call.start` and `event=tool.call.end` records with the tool
+name, MCP provenance when available, run identifier, duration, and output size. MCP
+connection and discovery events use the `event=mcp.*` prefix. Prompt text and tool result
+content are not logged.
+
+`LOG_LEVEL` defaults to `INFO`. Tool argument values are omitted by default; set
+`TOOL_CALL_LOG_ARGUMENTS=1` only for local diagnosis when sanitized, 500-character-bounded
+argument values are needed. Keys containing token, secret, password, credential, API-key,
+authorization, or cookie markers are redacted.

@@ -78,7 +78,8 @@ def platform_admin_required(view):
 def admin_mcp_page():
     """Render the MCP namespace administration page."""
     namespaces = MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all()
-    return render_template("admin/mcp.html", namespaces=namespaces)
+    groups = Group.query.order_by(Group.name.asc(), Group.slug.asc()).all()
+    return render_template("admin/mcp.html", namespaces=namespaces, groups=groups)
 
 
 @bp.get("/api/admin/mcp-namespaces")
