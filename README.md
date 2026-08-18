@@ -21,7 +21,8 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    LANGGRAPH_DATABASE_URL=postgresql://...
    OPENAI_API_KEY=...
    CHAT_MODEL_PROVIDER=openai
-   CUSTOM_REASONING_GRAPH_ENABLED=0
+   CUSTOM_REASONING_GRAPH_ENABLED=1
+   CUSTOM_REASONING_MAX_RESEARCH_ROUNDS=2
    MEMORY_EMBEDDING_MODEL=text-embedding-3-small
    MEMORY_EMBEDDING_DIMENSIONS=1536
    CONVERSATION_HISTORY_LIMIT=24
@@ -87,6 +88,13 @@ That path treats `reasoning_effort` as graph topology:
 The custom graph currently uses `CHAT_MODEL_PROVIDER=openai`, but model construction is
 isolated in the service layer so additional providers can be added without changing the
 reasoning workflow.
+
+When the user has MCP access, the custom graph makes a no-tool routing decision before
+answering. Only its dedicated `mcp_research` node receives MCP tools, and that node accepts
+only tools explicitly annotated as read-only and non-destructive. Planning, drafting,
+critique, finalization, and memory nodes use a separate unbound model with no MCP tools.
+High and xhigh workflows can return to research after critique, bounded by
+`CUSTOM_REASONING_MAX_RESEARCH_ROUNDS` (default `2`).
 
 ## Multi-tenant MCP access
 
@@ -171,8 +179,9 @@ Useful authenticated endpoints:
 - `GET /api/me/mcp-namespaces` returns the current user's effective namespace union.
 - `DELETE /api/admin/groups/<group-id>/mcp-namespaces/<namespace>` revokes a grant.
 
-The optional custom reasoning graph does not implement tool execution. Users who have any
-MCP namespace grants therefore use the standard tool-capable LangGraph agent automatically.
+With the custom reasoning graph enabled, MCP namespace grants remain on the custom graph and
+feed only its read-only `mcp_research` node. With the custom graph disabled, users continue to
+use the standard tool-capable agent.
 
 ### Tool-call logging
 
