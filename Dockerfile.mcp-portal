@@ -1,0 +1,21 @@
+ARG PYTHON_BASE_IMAGE=python:3.14-slim
+FROM ${PYTHON_BASE_IMAGE} AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN python -m venv /opt/mcp-portal
+ENV PATH="/opt/mcp-portal/bin:${PATH}"
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install .
+
+EXPOSE 8001
+
+CMD ["mcp-portal", "--production", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8001", "--path", "/mcp", "--no-banner"]

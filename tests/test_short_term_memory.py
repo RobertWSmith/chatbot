@@ -4,6 +4,7 @@ from app.services.agent import _conversation_messages
 
 
 def test_conversation_messages_loads_recent_thread_turns_from_postgres(app):
+    """Ensure recent persisted turns are replayed in chronological order."""
     with app.app_context():
         user = User(email="history@example.com")
         user.set_password("very-secure-password")
@@ -41,6 +42,7 @@ def test_conversation_messages_loads_recent_thread_turns_from_postgres(app):
 
 
 def test_conversation_messages_respects_history_limit(app):
+    """Ensure verbatim model history respects the configured limit."""
     app.config["CONVERSATION_HISTORY_LIMIT"] = 2
     with app.app_context():
         user = User(email="limited@example.com")
@@ -65,8 +67,9 @@ def test_conversation_messages_respects_history_limit(app):
             {
                 "role": "system",
                 "content": (
-                    "Rolling summary of earlier turns in this same chat. Use it as short-term "
-                    "conversation memory before the recent verbatim turns:\n\nConversation summary:\n"
+                    "Rolling summary of earlier turns in this same chat. Use it as "
+                    "short-term conversation memory before the recent verbatim turns:\n\n"
+                    "Conversation summary:\n"
                     "- user: turn 0\n- assistant: turn 1\n- user: turn 2"
                 ),
             },
@@ -76,6 +79,7 @@ def test_conversation_messages_respects_history_limit(app):
 
 
 def test_conversation_messages_rolls_overflow_into_snapshot(app):
+    """Ensure overflowing turns are compacted into a rolling snapshot."""
     app.config["CONVERSATION_HISTORY_LIMIT"] = 3
     with app.app_context():
         user = User(email="summary@example.com")
@@ -103,15 +107,19 @@ def test_conversation_messages_rolls_overflow_into_snapshot(app):
         assert "important detail 2" in snapshot.summary
         assert messages[0]["role"] == "system"
         assert "important detail 0" in messages[0]["content"]
-        assert messages[-3:] == [
-            {"role": "assistant", "content": "important detail 3"},
-            {"role": "user", "content": "important detail 4"},
-            {"role": "assistant", "content": "important detail 5"},
-            {"role": "user", "content": "important detail 5"},
-        ][-3:]
+        assert (
+            messages[-3:]
+            == [
+                {"role": "assistant", "content": "important detail 3"},
+                {"role": "user", "content": "important detail 4"},
+                {"role": "assistant", "content": "important detail 5"},
+                {"role": "user", "content": "important detail 5"},
+            ][-3:]
+        )
 
 
 def test_conversation_messages_extends_existing_snapshot(app):
+    """Ensure later overflow extends rather than repeats an older snapshot."""
     app.config["CONVERSATION_HISTORY_LIMIT"] = 2
     with app.app_context():
         user = User(email="extend-summary@example.com")

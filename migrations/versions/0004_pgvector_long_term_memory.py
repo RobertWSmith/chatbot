@@ -1,11 +1,12 @@
-"""add pgvector long term memory
+"""Add pgvector long-term memory.
 
 Revision ID: 0004_pgvector_long_term_memory
 Revises: 0003_message_telemetry
 Create Date: 2026-05-10 00:00:00.000000
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 from pgvector.sqlalchemy import Vector
 
 revision = "0004_pgvector_long_term_memory"
@@ -15,6 +16,7 @@ depends_on = None
 
 
 def upgrade():
+    """Enable pgvector and add indexed, approved long-term memories."""
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.create_table(
         "long_term_memories",
@@ -61,6 +63,7 @@ def upgrade():
 
 
 def downgrade():
+    """Remove long-term memory storage and the pgvector extension."""
     op.execute("DROP INDEX IF EXISTS ix_long_term_memories_embedding_hnsw")
     op.drop_index("ix_long_term_memories_user_category", table_name="long_term_memories")
     op.drop_index("ix_long_term_memories_source_pending", table_name="long_term_memories")

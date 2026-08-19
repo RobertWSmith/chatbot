@@ -14,6 +14,7 @@ bp = Blueprint("auth", __name__)
 @bp.get("/login")
 @bp.post("/login")
 def login():
+    """Authenticate an account and establish its session."""
     if current_user.is_authenticated:
         return redirect(url_for("chat.chat_home"))
     form = LoginForm()
@@ -34,6 +35,7 @@ def login():
 @bp.get("/register")
 @bp.post("/register")
 def register():
+    """Create an account and sign in the new user."""
     if current_user.is_authenticated:
         return redirect(url_for("chat.chat_home"))
     form = RegisterForm()
@@ -51,7 +53,10 @@ def register():
             db.session.add(user)
             db.session.commit()
             login_user(user)
-            flash("Account created. Email verification is ready to wire to your mail provider.", "info")
+            flash(
+                "Account created. Email verification is ready to wire to your mail provider.",
+                "info",
+            )
             return redirect(url_for("chat.chat_home"))
     return render_template("auth/register.html", form=form)
 
@@ -59,6 +64,7 @@ def register():
 @bp.get("/logout")
 @login_required
 def logout():
+    """End the authenticated user's session."""
     logout_user()
     return redirect(url_for("auth.login"))
 
@@ -66,6 +72,7 @@ def logout():
 @bp.get("/forgot-password")
 @bp.post("/forgot-password")
 def forgot_password():
+    """Create a password-reset token without revealing account existence."""
     form = ForgotPasswordForm()
     reset_token = None
     if form.validate_on_submit():
@@ -79,6 +86,11 @@ def forgot_password():
 @bp.get("/reset-password/<token>")
 @bp.post("/reset-password/<token>")
 def reset_password(token: str):
+    """Replace the password associated with a valid reset token.
+
+    Args:
+        token: Time-limited password-reset token.
+    """
     user = User.verify_token(token, "password-reset", max_age=3600)
     if not user:
         flash("That reset link is invalid or expired.", "error")
@@ -96,6 +108,11 @@ def reset_password(token: str):
 @bp.get("/verify-email/<token>")
 @login_required
 def verify_email(token: str):
+    """Mark the current user's email as verified when the token is valid.
+
+    Args:
+        token: Time-limited email-verification token.
+    """
     user = User.verify_token(token, "verify-email", max_age=86400)
     if user and user.id == current_user.id:
         user.is_email_verified = True
@@ -110,6 +127,7 @@ def verify_email(token: str):
 @bp.post("/account/delete")
 @login_required
 def delete_account():
+    """Delete the current account after confirming its email address."""
     form = DeleteAccountForm()
     if form.validate_on_submit() and form.email.data.lower().strip() == current_user.email:
         db.session.delete(current_user)

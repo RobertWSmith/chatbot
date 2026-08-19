@@ -1,13 +1,12 @@
-"""add multi-tenant groups and MCP namespace grants
+"""Add multi-tenant groups and MCP namespace grants.
 
 Revision ID: 0005_multi_tenant_mcp
 Revises: 0004_pgvector_long_term_memory
 Create Date: 2026-08-16 00:00:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "0005_multi_tenant_mcp"
 down_revision = "0004_pgvector_long_term_memory"
@@ -16,6 +15,7 @@ depends_on = None
 
 
 def upgrade():
+    """Add tenant groups, invitations, MCP namespaces, and access grants."""
     op.add_column(
         "users",
         sa.Column(
@@ -157,6 +157,7 @@ def upgrade():
 
 
 def downgrade():
+    """Remove multi-tenant MCP access tables and administrator state."""
     op.drop_index("ix_group_invitations_token_hash", table_name="group_invitations")
     op.drop_index("ix_group_invitations_group_created", table_name="group_invitations")
     op.drop_table("group_invitations")

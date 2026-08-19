@@ -1,89 +1,14 @@
-const md = window.markdownit({
-  html: false,
-  linkify: true,
-  typographer: true,
-  highlight: (str, lang) => {
-    if (lang && window.hljs && hljs.getLanguage(lang)) {
-      try {
-        return hljs.highlight(str, { language: lang }).value;
-      } catch {
-        return "";
-      }
-    }
-    return "";
-  },
-});
+import { jsonHeaders } from "./app.js";
+import {
+  appendMessage,
+  collapseReasoning,
+  ensureReasoning,
+  renderExistingMarkdown,
+  renderMarkdown,
+} from "./chat-rendering.js";
+import { readSse } from "./chat-stream.js";
 
-if (window.markdownitTaskLists) {
-  md.use(window.markdownitTaskLists);
-}
-
-function renderMarkdown(target, source) {
-  const balanced = balanceMarkdown(source);
-  const dirty = md.render(balanced);
-  target.innerHTML = DOMPurify.sanitize(dirty);
-  target.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
-}
-
-function balanceMarkdown(source) {
-  const fenceCount = (source.match(/```/g) || []).length;
-  return fenceCount % 2 === 1 ? `${source}\n\`\`\`` : source;
-}
-
-function appendMessage(role, text = "") {
-  const article = document.createElement("article");
-  article.className = `message ${role}`;
-  const label = role === "user" ? "You" : "Assistant";
-  article.innerHTML = `<div class="message-role">${label}</div><div class="markdown"></div>`;
-  const markdown = article.querySelector(".markdown");
-  markdown.dataset.source = text;
-  renderMarkdown(markdown, text);
-  document.querySelector("#messages").append(article);
-  article.scrollIntoView({ block: "end" });
-  return { article, markdown };
-}
-
-function ensureReasoning(article) {
-  let details = article.querySelector(".reasoning");
-  if (!details) {
-    details = document.createElement("details");
-    details.className = "reasoning";
-    details.open = true;
-    details.innerHTML = "<summary>Reasoning summary</summary><div class=\"markdown\"></div>";
-    article.insertBefore(details, article.querySelector(".markdown"));
-  }
-  return details.querySelector(".markdown");
-}
-
-function collapseReasoning(article) {
-  const details = article.querySelector(".reasoning");
-  if (details) {
-    details.open = false;
-  }
-}
-
-async function readSse(response, onEvent) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop();
-    for (const part of parts) {
-      const eventLine = part.split("\n").find((line) => line.startsWith("event: "));
-      const dataLine = part.split("\n").find((line) => line.startsWith("data: "));
-      if (!eventLine || !dataLine) continue;
-      onEvent(eventLine.slice(7), JSON.parse(dataLine.slice(6)));
-    }
-  }
-}
-
-document.querySelectorAll("[data-markdown-source]").forEach((node) => {
-  renderMarkdown(node, node.dataset.markdownSource || node.textContent);
-});
+renderExistingMarkdown();
 
 const form = document.querySelector("#chat-form");
 if (form) {
@@ -119,6 +44,7 @@ if (form) {
     const status = document.querySelector("#stream-status");
     const message = input.value.trim();
     if (!message) return;
+
     input.value = "";
     resizeComposer();
     appendMessage("user", message);
@@ -131,7 +57,7 @@ if (form) {
     try {
       const response = await fetch(`/api/chat/threads/${pane.dataset.threadId}/messages`, {
         method: "POST",
-        headers: window.chatApp.jsonHeaders(),
+        headers: jsonHeaders(),
         body: JSON.stringify({ message }),
       });
       if (!response.ok) {
@@ -172,7 +98,7 @@ if (newThread) {
   newThread.addEventListener("click", async () => {
     const response = await fetch("/api/chat/threads", {
       method: "POST",
-      headers: window.chatApp.jsonHeaders(),
+      headers: jsonHeaders(),
     });
     if (response.ok) {
       const payload = await response.json();

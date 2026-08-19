@@ -1,8 +1,78 @@
+[build-system]
+requires = ["setuptools>=80.10.2,<81.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flask-langgraph-chatbot"
+version = "0.2.0"
+description = "A Flask chatbot with LangGraph, Postgres persistence, and multi-tenant MCP access."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "Flask>=3.1.0,<4.0.0",
+    "Flask-Login>=0.6.3,<1.0.0",
+    "Flask-Migrate>=4.1.0,<5.0.0",
+    "Flask-SQLAlchemy>=3.1.1,<4.0.0",
+    "Flask-WTF>=1.2.2,<2.0.0",
+    "WTForms>=3.2.1,<4.0.0",
+    "argon2-cffi>=25.1.0,<26.0.0",
+    "email-validator>=2.2.0,<3.0.0",
+    "gunicorn>=23.0.0,<24.0.0",
+    "python-dotenv>=1.0.1,<2.0.0",
+    "psycopg[binary,pool]>=3.3.4,<4.0.0",
+    "pgvector>=0.4.1,<1.0.0",
+    "pydantic>=2.13.4,<3.0.0",
+    "langchain>=1.2.15,<2.0.0",
+    "langchain-openai>=1.1.12,<2.0.0",
+    "langchain-mcp-adapters>=0.3.2,<1.0.0",
+    "mcp>=1.28.1,<2.0.0",
+    "langgraph>=1.1.10,<2.0.0",
+    "langgraph-checkpoint>=4.1.0,<5.0.0",
+    "langgraph-checkpoint-postgres>=3.0.5,<4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=26.5.1,<27.0.0",
+    "pytest>=9.0.2,<10.0.0",
+    "coverage>=7.15.4,<8.0.0",
+    "ruff>=0.16.3,<1.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = [
+    "static/css/*.css",
+    "static/js/*.js",
+    "templates/*.html",
+    "templates/*/*.html",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
 
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+extend-select = ["D"]
+ignore = ["D100", "D104"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

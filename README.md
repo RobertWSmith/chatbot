@@ -5,11 +5,13 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
 ## Quick Start
 
 1. Create and activate a Python 3.11+ virtual environment.
-2. Install dependencies:
+2. Install the project and its development dependencies:
 
    ```powershell
-   pip install -r requirements.txt
+   pip install -e ".[dev]"
    ```
+
+   For a production-only installation, use `pip install .` instead.
 
 3. Copy `.env.example` to `.env` and set:
 
@@ -19,7 +21,8 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    LANGGRAPH_DATABASE_URL=postgresql://...
    OPENAI_API_KEY=...
    CHAT_MODEL_PROVIDER=openai
-   CUSTOM_REASONING_GRAPH_ENABLED=0
+   CUSTOM_REASONING_GRAPH_ENABLED=1
+   CUSTOM_REASONING_MAX_RESEARCH_ROUNDS=2
    MEMORY_EMBEDDING_MODEL=text-embedding-3-small
    MEMORY_EMBEDDING_DIMENSIONS=1536
    CONVERSATION_HISTORY_LIMIT=24
@@ -39,6 +42,24 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    ```
 
 If `OPENAI_API_KEY` is empty, chat uses local demo streaming so the UI and auth flow can be tested without model calls.
+
+## Tests
+
+Run the complete suite from the project root:
+
+```powershell
+python -m coverage run -m pytest
+python -m coverage report
+python -m ruff check .
+python -m black --check .
+```
+
+The tests exercise authentication and password migration, chat streaming and telemetry,
+short- and long-term memory, settings validation, reasoning workflows, public web URL
+safety, and multi-tenant MCP authorization. The code-quality tests also require every
+Python function, method, and class—including test helpers and migrations—to retain a
+docstring with basic Google-style summary and section formatting. The configured coverage
+check fails below 80% application statement coverage.
 
 ## Memory
 
@@ -68,6 +89,13 @@ The custom graph currently uses `CHAT_MODEL_PROVIDER=openai`, but model construc
 isolated in the service layer so additional providers can be added without changing the
 reasoning workflow.
 
+When the user has MCP access, the custom graph makes a no-tool routing decision before
+answering. Only its dedicated `mcp_research` node receives MCP tools, and that node accepts
+only tools explicitly annotated as read-only and non-destructive. Planning, drafting,
+critique, finalization, and memory nodes use a separate unbound model with no MCP tools.
+High and xhigh workflows can return to research after critique, bounded by
+`CUSTOM_REASONING_MAX_RESEARCH_ROUNDS` (default `2`).
+
 ## Multi-tenant MCP access
 
 MCP access is granted through groups. A user can belong to any number of groups and gets
@@ -86,6 +114,16 @@ accounts can instead be promoted by setting `users.is_platform_admin` directly. 
    `POST /api/admin/mcp-namespaces`, then grants it using
    `PUT /api/admin/groups/<group-id>/mcp-namespaces/<namespace>`.
 
+Platform administrators can also open `/admin/mcp` to view the server inventory and add
+remote MCP servers through the admin UI. MCP request and response payloads are validated
+with Pydantic; bearer tokens are still referenced by environment-variable name and are
+never submitted to or stored by the application.
+
+`PLATFORM_ADMIN_EMAILS` is also checked when an authenticated user opens an admin route,
+so an existing account becomes an administrator after its email is added and the Flask
+process is restarted. Other signed-in users see an access screen with a link to switch
+accounts instead of Flask's generic forbidden page.
+
 Example namespace request:
 
 ```json
@@ -98,6 +136,35 @@ Example namespace request:
   "headers": {"X-Client": "chatbot"}
 }
 ```
+
+Docker Compose builds the sibling `../mcp-portal` project and runs it on the shared
+Compose network. Its MCP addresses are:
+
+- From the chatbot container: `http://mcp-portal:8001/mcp`
+- From the host: `http://localhost:8001/mcp` (or the port set by
+  `MCP_PORTAL_HOST_PORT`)
+
+The portal prints both addresses during startup. View them with:
+
+```powershell
+docker compose logs mcp-portal
+```
+
+Configure the chatbot namespace with `streamable_http` (underscore) as the transport:
+
+```json
+{
+  "namespace": "portal",
+  "display_name": "MCP Portal",
+  "transport": "streamable_http",
+  "url": "http://mcp-portal:8001/mcp",
+  "headers": {}
+}
+```
+
+The Compose defaults intentionally use no portal authentication and no portal database
+backend for local development. Configure an authentication provider before exposing the
+portal beyond the local machine or a trusted container network.
 
 Set `BILLING_MCP_TOKEN` in the web process environment. The database stores only that
 environment-variable name, not the bearer token. Only remote HTTP/SSE transports are
@@ -112,5 +179,26 @@ Useful authenticated endpoints:
 - `GET /api/me/mcp-namespaces` returns the current user's effective namespace union.
 - `DELETE /api/admin/groups/<group-id>/mcp-namespaces/<namespace>` revokes a grant.
 
-The optional custom reasoning graph does not implement tool execution. Users who have any
-MCP namespace grants therefore use the standard tool-capable LangGraph agent automatically.
+With the custom reasoning graph enabled, MCP namespace grants remain on the custom graph and
+feed only its read-only `mcp_research` node. With the custom graph disabled, users continue to
+use the standard tool-capable agent.
+
+### Tool-call logging
+
+The web process logs the selected agent mode, authorized MCP namespaces, discovered tool
+inventory, and every actual tool start, success, or failure. Follow the audit stream with:
+
+```powershell
+docker compose logs -f web
+```
+
+Look for `event=agent.mode` and `event=agent.tool_inventory` first. An actual invocation
+produces matching `event=tool.call.start` and `event=tool.call.end` records with the tool
+name, MCP provenance when available, run identifier, duration, and output size. MCP
+connection and discovery events use the `event=mcp.*` prefix. Prompt text and tool result
+content are not logged.
+
+`LOG_LEVEL` defaults to `INFO`. Tool argument values are omitted by default; set
+`TOOL_CALL_LOG_ARGUMENTS=1` only for local diagnosis when sanitized, 500-character-bounded
+argument values are needed. Keys containing token, secret, password, credential, API-key,
+authorization, or cookie markers are redacted.

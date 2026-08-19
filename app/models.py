@@ -1,22 +1,28 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flask import current_app
 from flask_login import UserMixin
-from pgvector.sqlalchemy import Vector
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from pgvector.sqlalchemy import Vector
 
 from .extensions import db
 from .security import hash_password, password_needs_rehash, verify_password
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """Return the current timezone-aware UTC timestamp."""
+    return datetime.now(UTC)
 
 
 def default_settings() -> dict:
+    """Build a fresh settings dictionary from the application defaults.
+
+    Returns:
+        A complete, independently mutable user-settings dictionary.
+    """
     return {
         "model_name": current_app.config.get("DEFAULT_MODEL", "gpt-5.5"),
         "reasoning_effort": current_app.config.get("DEFAULT_REASONING_EFFORT", "medium"),
@@ -39,6 +45,8 @@ def default_settings() -> dict:
 
 
 class User(UserMixin, db.Model):
+    """Represent an authenticated application user."""
+
     __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -84,20 +92,52 @@ class User(UserMixin, db.Model):
     )
 
     def set_password(self, password: str) -> None:
+        """Hash and store a replacement password.
+
+        Args:
+            password: Plain-text password to store securely.
+        """
         self.password_hash = hash_password(password)
 
     def check_password(self, password: str) -> bool:
+        """Check a candidate password against the stored hash.
+
+        Args:
+            password: Candidate plain-text password.
+
+        Returns:
+            Whether the password matches.
+        """
         return verify_password(self.password_hash, password)
 
     def password_needs_rehash(self) -> bool:
+        """Return whether the stored password hash should be upgraded."""
         return password_needs_rehash(self.password_hash)
 
     def make_token(self, purpose: str) -> str:
+        """Create a signed token scoped to this user and a purpose.
+
+        Args:
+            purpose: Action for which the token will be accepted.
+
+        Returns:
+            A signed token string.
+        """
         serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
         return serializer.dumps({"user_id": self.id, "purpose": purpose})
 
     @staticmethod
-    def verify_token(token: str, purpose: str, max_age: int = 3600) -> "User | None":
+    def verify_token(token: str, purpose: str, max_age: int = 3600) -> User | None:
+        """Validate a signed user token.
+
+        Args:
+            token: Serialized token to validate.
+            purpose: Required token purpose.
+            max_age: Maximum token age in seconds.
+
+        Returns:
+            The token's user when valid, or ``None`` otherwise.
+        """
         serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
         try:
             data = serializer.loads(token, max_age=max_age)
@@ -109,6 +149,8 @@ class User(UserMixin, db.Model):
 
 
 class Group(db.Model):
+    """Represent a tenant group that owns memberships and MCP grants."""
+
     __tablename__ = "groups"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -141,6 +183,8 @@ class Group(db.Model):
 
 
 class GroupMembership(db.Model):
+    """Associate a user with a group and an authorization role."""
+
     __tablename__ = "group_memberships"
     __table_args__ = (
         db.UniqueConstraint("group_id", "user_id", name="uq_group_memberships_group_user"),
@@ -167,6 +211,8 @@ class GroupMembership(db.Model):
 
 
 class MCPNamespace(db.Model):
+    """Describe a remotely hosted MCP server namespace."""
+
     __tablename__ = "mcp_namespaces"
     __table_args__ = (
         db.CheckConstraint(
@@ -195,6 +241,8 @@ class MCPNamespace(db.Model):
 
 
 class GroupMCPNamespace(db.Model):
+    """Grant a group access to an MCP namespace."""
+
     __tablename__ = "group_mcp_namespaces"
     __table_args__ = (
         db.UniqueConstraint(
@@ -223,6 +271,8 @@ class GroupMCPNamespace(db.Model):
 
 
 class GroupInvitation(db.Model):
+    """Represent a one-time, optionally email-bound group invitation."""
+
     __tablename__ = "group_invitations"
     __table_args__ = (
         db.CheckConstraint("role IN ('owner', 'member')", name="ck_group_invitations_role"),
@@ -258,6 +308,8 @@ class GroupInvitation(db.Model):
 
 
 class UserSettings(db.Model):
+    """Store per-user overrides for application settings."""
+
     __tablename__ = "user_settings"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -269,20 +321,25 @@ class UserSettings(db.Model):
     user = db.relationship("User", back_populates="settings")
 
     def merged(self) -> dict:
-        merged = default_settings()
-        merged.update(self.data or {})
-        merged["markdown_options"] = {
-            **default_settings()["markdown_options"],
-            **(self.data or {}).get("markdown_options", {}),
-        }
-        merged["privacy"] = {
-            **default_settings()["privacy"],
-            **(self.data or {}).get("privacy", {}),
-        }
+        """Merge stored overrides into a fresh set of defaults.
+
+        Returns:
+            Complete effective settings without shared nested mappings.
+        """
+        defaults = default_settings()
+        overrides = self.data or {}
+        merged = {**defaults, **overrides}
+        for nested_key in ("markdown_options", "privacy"):
+            merged[nested_key] = {
+                **defaults[nested_key],
+                **overrides.get(nested_key, {}),
+            }
         return merged
 
 
 class ChatThread(db.Model):
+    """Represent one user-owned chat conversation."""
+
     __tablename__ = "chat_threads"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -318,6 +375,8 @@ class ChatThread(db.Model):
 
 
 class ChatMessage(db.Model):
+    """Represent a user or assistant message in a chat thread."""
+
     __tablename__ = "chat_messages"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -346,6 +405,8 @@ class ChatMessage(db.Model):
 
 
 class MessageTelemetry(db.Model):
+    """Capture lifecycle timing and token metrics for one chat message."""
+
     __tablename__ = "message_telemetry"
     __table_args__ = (
         db.Index("ix_message_telemetry_thread_role_created", "thread_id", "role", "created_at"),
@@ -379,6 +440,8 @@ class MessageTelemetry(db.Model):
 
 
 class ConversationMemorySnapshot(db.Model):
+    """Store a rolling summary of older messages in a chat thread."""
+
     __tablename__ = "conversation_memory_snapshots"
     __table_args__ = (
         db.Index(
@@ -412,6 +475,8 @@ class ConversationMemorySnapshot(db.Model):
 
 
 class ConversationMemory(db.Model):
+    """Store structured short-term memory extracted from a conversation."""
+
     __tablename__ = "conversation_memories"
     __table_args__ = (
         db.CheckConstraint(
@@ -476,6 +541,8 @@ class ConversationMemory(db.Model):
 
 
 class PendingMemory(db.Model):
+    """Represent a long-term memory proposal awaiting user review."""
+
     __tablename__ = "pending_memories"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -499,6 +566,8 @@ class PendingMemory(db.Model):
 
 
 class LongTermMemory(db.Model):
+    """Store an approved memory and its retrieval embedding."""
+
     __tablename__ = "long_term_memories"
     __table_args__ = (
         db.CheckConstraint(

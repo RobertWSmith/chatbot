@@ -1,11 +1,12 @@
-"""add conversation memory schema
+"""Add the conversation memory schema.
 
 Revision ID: 0002_conversation_memory
 Revises: 0001_initial
 Create Date: 2026-05-09 00:00:00.000000
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0002_conversation_memory"
 down_revision = "0001_initial"
@@ -14,6 +15,7 @@ depends_on = None
 
 
 def upgrade():
+    """Add rolling snapshots and structured conversation-memory tables."""
     op.create_table(
         "conversation_memory_snapshots",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -93,6 +95,7 @@ def upgrade():
 
 
 def downgrade():
+    """Remove structured conversation memory and rolling snapshots."""
     op.drop_index(
         "ix_conversation_memories_user_thread_status_created",
         table_name="conversation_memories",

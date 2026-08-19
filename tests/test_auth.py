@@ -1,11 +1,13 @@
+from werkzeug.security import generate_password_hash
+
 from app.extensions import db
 from app.models import User
-from werkzeug.security import generate_password_hash
 
 from .conftest import register
 
 
 def test_register_login_logout(client, app):
+    """Ensure a user can register, sign out, and sign in again."""
     response = register(client)
     assert response.status_code == 200
     with app.app_context():
@@ -26,6 +28,7 @@ def test_register_login_logout(client, app):
 
 
 def test_login_accepts_password_manager_characters(client, app):
+    """Ensure login accepts long passwords with generated punctuation."""
     password = "  exact Pässw0rd from manager!  "
     register(client, email="manager@example.com", password=password)
     client.get("/logout")
@@ -41,6 +44,7 @@ def test_login_accepts_password_manager_characters(client, app):
 
 
 def test_login_rehashes_legacy_werkzeug_password(client, app):
+    """Ensure successful login upgrades a legacy Werkzeug password hash."""
     password = "legacy-secure-password"
     with app.app_context():
         user = User(email="legacy@example.com", password_hash=generate_password_hash(password))
@@ -62,6 +66,7 @@ def test_login_rehashes_legacy_werkzeug_password(client, app):
 
 
 def test_login_rejects_invalid_hash_without_error(client, app):
+    """Ensure malformed stored hashes fail authentication safely."""
     with app.app_context():
         user = User(email="invalid-hash@example.com", password_hash="not-a-real-hash")
         db.session.add(user)
@@ -78,6 +83,7 @@ def test_login_rejects_invalid_hash_without_error(client, app):
 
 
 def test_register_shows_password_validation_errors(client):
+    """Ensure registration displays password length validation errors."""
     response = register(client, email="short@example.com", password="short")
 
     assert response.status_code == 200
@@ -85,6 +91,7 @@ def test_register_shows_password_validation_errors(client):
 
 
 def test_duplicate_email_rejected(client, app):
+    """Ensure registration rejects an email that already has an account."""
     register(client)
     client.get("/logout")
     response = register(client)

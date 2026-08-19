@@ -12,11 +12,21 @@ from app.models import LongTermMemory, PendingMemory, utcnow
 
 @dataclass(frozen=True)
 class MemorySearchResult:
+    """Pair an approved memory with its query similarity score."""
+
     memory: LongTermMemory
     score: float
 
 
 def approve_memory_to_rag(proposal: PendingMemory) -> LongTermMemory:
+    """Create an indexed long-term memory from an approved proposal.
+
+    Args:
+        proposal: User-approved pending memory.
+
+    Returns:
+        The existing or newly staged long-term memory.
+    """
     existing = LongTermMemory.query.filter_by(source_pending_memory_id=proposal.id).one_or_none()
     if existing:
         return existing
@@ -40,6 +50,16 @@ def approve_memory_to_rag(proposal: PendingMemory) -> LongTermMemory:
 
 
 def search_long_term_memories(user_id: int, query: str, limit: int = 5) -> list[MemorySearchResult]:
+    """Retrieve a user's approved memories by embedding similarity.
+
+    Args:
+        user_id: Owner whose memories may be searched.
+        query: Natural-language retrieval query.
+        limit: Maximum number of results.
+
+    Returns:
+        Results ordered from most to least similar.
+    """
     query_embedding = embed_memory_text(query)
     if db.session.bind and db.session.bind.dialect.name == "postgresql":
         distance = LongTermMemory.embedding.cosine_distance(query_embedding).label("distance")
@@ -55,7 +75,10 @@ def search_long_term_memories(user_id: int, query: str, limit: int = 5) -> list[
         memories = LongTermMemory.query.filter_by(user_id=user_id).all()
         results = sorted(
             (
-                MemorySearchResult(memory=memory, score=cosine_similarity(query_embedding, memory.embedding))
+                MemorySearchResult(
+                    memory=memory,
+                    score=cosine_similarity(query_embedding, memory.embedding),
+                )
                 for memory in memories
             ),
             key=lambda result: result.score,
@@ -72,6 +95,14 @@ def search_long_term_memories(user_id: int, query: str, limit: int = 5) -> list[
 
 
 def format_memory_search_results(results: list[MemorySearchResult]) -> str:
+    """Format memory search results for model context.
+
+    Args:
+        results: Ranked memory search results.
+
+    Returns:
+        A compact textual list, or a no-results message.
+    """
     if not results:
         return "No relevant long-term memories found."
     lines = []
@@ -85,6 +116,14 @@ def format_memory_search_results(results: list[MemorySearchResult]) -> str:
 
 
 def embed_memory_text(text: str) -> list[float]:
+    """Embed memory text with OpenAI or a deterministic local fallback.
+
+    Args:
+        text: Memory or query text.
+
+    Returns:
+        A normalized embedding vector.
+    """
     model = current_app.config["MEMORY_EMBEDDING_MODEL"]
     dimensions = int(current_app.config["MEMORY_EMBEDDING_DIMENSIONS"])
     api_key = current_app.config.get("OPENAI_API_KEY")
@@ -97,6 +136,15 @@ def embed_memory_text(text: str) -> list[float]:
 
 
 def deterministic_embedding(text: str, dimensions: int) -> list[float]:
+    """Create a stable normalized embedding for local development and tests.
+
+    Args:
+        text: Text used as the deterministic seed.
+        dimensions: Required vector length.
+
+    Returns:
+        A normalized vector with the requested number of dimensions.
+    """
     values = []
     seed = text.encode("utf-8")
     counter = 0
@@ -110,6 +158,15 @@ def deterministic_embedding(text: str, dimensions: int) -> list[float]:
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
+    """Calculate cosine similarity across the shared vector dimensions.
+
+    Args:
+        left: First vector.
+        right: Second vector.
+
+    Returns:
+        Cosine similarity, or ``0.0`` when either vector is empty.
+    """
     left_values = list(left) if left is not None else []
     right_values = list(right) if right is not None else []
     if not left_values or not right_values:
