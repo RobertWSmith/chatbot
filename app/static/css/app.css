@@ -149,6 +149,58 @@ a {
   margin-top: 0.9rem;
 }
 
+.reasoning .markdown {
+  margin-top: 0.75rem;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  color: var(--text);
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.markdown h1 {
+  font-size: 1.45rem;
+}
+
+.markdown h2 {
+  font-size: 1.28rem;
+}
+
+.markdown h3 {
+  font-size: 1.14rem;
+}
+
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: 1rem;
+}
+
+.markdown > :not(h1, h2, h3, h4, h5, h6) + :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 1.25rem;
+}
+
+.reasoning .markdown h1 {
+  font-size: 1.2rem;
+}
+
+.reasoning .markdown h2 {
+  font-size: 1.1rem;
+}
+
+.reasoning .markdown h3,
+.reasoning .markdown h4,
+.reasoning .markdown h5,
+.reasoning .markdown h6 {
+  font-size: 1rem;
+}
+
 .markdown ul,
 .markdown ol {
   padding-left: 1.35rem;

@@ -146,6 +146,8 @@ async def _astream_langgraph_response(
             bool(current_app.config.get("TOOL_CALL_LOG_ARGUMENTS")) if has_app_context() else False
         ),
     )
+    last_reasoning_part: tuple[Any, ...] | None = None
+    reasoning_trailing_newlines = 0
 
     yield {"type": "status", "text": "Thinking"}
     stream_kwargs = {
@@ -167,9 +169,26 @@ async def _astream_langgraph_response(
                 continue
             for block in message_chunk.content_blocks:
                 if block["type"] == "reasoning" and settings.get("reasoning_summaries_enabled"):
-                    text = _reasoning_summary_text(block)
-                    if text:
+                    for part_key, text in _reasoning_summary_parts(block):
+                        if not text:
+                            continue
+                        if part_key is not None:
+                            part_key = (message_chunk.id, *part_key)
+                        if (
+                            last_reasoning_part is not None
+                            and part_key is not None
+                            and part_key != last_reasoning_part
+                        ):
+                            leading_newlines = len(text) - len(text.lstrip("\r\n"))
+                            missing_newlines = max(
+                                0,
+                                2 - reasoning_trailing_newlines - leading_newlines,
+                            )
+                            text = "\n" * missing_newlines + text
                         yield {"type": "reasoning_summary", "text": text}
+                        reasoning_trailing_newlines = len(text) - len(text.rstrip("\r\n"))
+                        if part_key is not None:
+                            last_reasoning_part = part_key
                 elif block["type"] == "text" and block.get("text"):
                     yield {"type": "token", "text": block["text"]}
         elif chunk["type"] == "updates":
@@ -261,6 +280,8 @@ async def _astream_custom_reasoning_graph_response(
     Yields:
         Status, reasoning-summary, answer, and memory-proposal events.
     """
+    from langchain.messages import AIMessageChunk
+
     from app.services.tool_logging import ToolCallLoggingCallback
 
     model = _build_chat_model(settings, provider_reasoning=False)
@@ -342,15 +363,32 @@ async def _astream_custom_reasoning_graph_response(
         ",".join(skipped_tools) or "none",
     )
     yield {"type": "status", "text": "Running custom reasoning graph"}
-    async for update in compiled.astream(
+    streamed_answer_nodes: set[str] = set()
+    answer_nodes = {"answer", "finalize"}
+    async for chunk in compiled.astream(
         {"messages": messages, "research_attempts": 0},
-        stream_mode="updates",
+        stream_mode=["messages", "updates"],
+        version="v2",
         config={"configurable": {"thread_id": thread.id}},
     ):
-        for node_name, values in update.items():
-            yield {"type": "status", "text": _reasoning_status(node_name)}
-            for event in _reasoning_events(values or {}, settings):
-                yield event
+        if chunk["type"] == "messages":
+            message_chunk, metadata = chunk["data"]
+            node_name = metadata.get("langgraph_node")
+            if node_name not in answer_nodes or not isinstance(message_chunk, AIMessageChunk):
+                continue
+            for block in message_chunk.content_blocks:
+                if block["type"] == "text" and block.get("text"):
+                    streamed_answer_nodes.add(node_name)
+                    yield {"type": "token", "text": block["text"]}
+        elif chunk["type"] == "updates":
+            for node_name, values in chunk["data"].items():
+                yield {"type": "status", "text": _reasoning_status(node_name)}
+                for event in _reasoning_events(
+                    values or {},
+                    settings,
+                    include_answer=node_name not in streamed_answer_nodes,
+                ):
+                    yield event
 
 
 def _build_custom_reasoning_graph(
@@ -916,12 +954,18 @@ def _mcp_research_prompt(state: ReasoningState, query: str) -> str:
     return "\n\n".join(parts)
 
 
-def _reasoning_events(values: dict[str, Any], settings: dict) -> Generator[dict, None, None]:
+def _reasoning_events(
+    values: dict[str, Any],
+    settings: dict,
+    *,
+    include_answer: bool = True,
+) -> Generator[dict, None, None]:
     """Translate custom graph state updates into client-facing events.
 
     Args:
         values: State fields returned by the completed graph node.
         settings: Effective user settings.
+        include_answer: Whether to emit the completed answer as a fallback token.
 
     Yields:
         Reasoning-summary, answer-token, and memory-proposal events.
@@ -931,7 +975,7 @@ def _reasoning_events(values: dict[str, Any], settings: dict) -> Generator[dict,
             yield {"type": "reasoning_summary", "text": f"Plan:\n\n{plan}\n\n"}
         if critique := values.get("critique"):
             yield {"type": "reasoning_summary", "text": f"Self-check:\n\n{critique}\n\n"}
-    if answer := values.get("answer"):
+    if include_answer and (answer := values.get("answer")):
         yield {"type": "token", "text": answer}
     if memory_proposal := values.get("memory_proposal"):
         yield {"type": "memory_proposal", **memory_proposal}
@@ -1076,23 +1120,49 @@ def _reasoning_summary_text(block: dict[str, Any]) -> str:
     Returns:
         Extracted summary text, or an empty string.
     """
+    return "".join(text for _part_key, text in _reasoning_summary_parts(block))
+
+
+def _reasoning_summary_parts(
+    block: dict[str, Any],
+) -> list[tuple[tuple[Any, ...] | None, str]]:
+    """Extract separately indexed text parts from a reasoning block.
+
+    Provider streams use summary indexes to mark semantic blocks. Keeping
+    those indexes lets the stream insert Markdown block spacing without
+    adding whitespace between ordinary text deltas.
+
+    Args:
+        block: Provider reasoning content block.
+
+    Returns:
+        Pairs containing an optional stable part key and its text.
+    """
     reasoning = block.get("reasoning")
     if isinstance(reasoning, str):
-        return reasoning
+        return [(None, reasoning)]
 
     summary = block.get("summary")
     if isinstance(summary, str):
-        return summary
+        return [(None, summary)]
     if isinstance(summary, dict):
-        text = summary.get("text")
-        return text if isinstance(text, str) else ""
-    if isinstance(summary, list):
-        return "".join(
-            item.get("text", "")
-            for item in summary
-            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        summary = [summary]
+    if not isinstance(summary, list):
+        return []
+
+    parts = []
+    for position, item in enumerate(summary):
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+            continue
+        block_identity = block.get("id", block.get("index"))
+        summary_index = item.get("index")
+        part_key = (
+            (block_identity, summary_index if summary_index is not None else position)
+            if block_identity is not None or summary_index is not None
+            else None
         )
-    return ""
+        parts.append((part_key, item["text"]))
+    return parts
 
 
 def _should_create_memory_proposal(prompt: str, settings: dict) -> bool:

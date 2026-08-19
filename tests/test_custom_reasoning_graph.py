@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from langchain.messages import AIMessageChunk
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from app.extensions import db
 from app.models import ChatThread, PendingMemory, User
@@ -87,6 +88,36 @@ class FakePrebuiltAgent:
         }
 
 
+class FakeMultipartReasoningAgent:
+    """Stream two separately indexed reasoning-summary sections."""
+
+    def stream(self, *args, **kwargs):
+        """Yield summary deltas whose second part begins with a heading."""
+        for summary_index, text in enumerate(("Reviewed the context.", "## Risks")):
+            yield {
+                "type": "messages",
+                "data": (
+                    AIMessageChunk(
+                        id="response-1",
+                        content=[
+                            {
+                                "type": "reasoning",
+                                "index": 0,
+                                "summary": [
+                                    {
+                                        "type": "summary_text",
+                                        "index": summary_index,
+                                        "text": text,
+                                    }
+                                ],
+                            }
+                        ],
+                    ),
+                    {},
+                ),
+            }
+
+
 def test_custom_reasoning_graph_streams_plan_and_answer(client, app, monkeypatch):
     """Ensure medium effort streams a public plan and final answer."""
     app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
@@ -113,6 +144,33 @@ def test_custom_reasoning_graph_streams_plan_and_answer(client, app, monkeypatch
         event == {"type": "token", "text": "Direct answer from the custom graph."}
         for event in events
     )
+
+
+def test_custom_reasoning_graph_forwards_live_final_answer_chunks(client, app, monkeypatch):
+    """Ensure streaming models do not collapse or duplicate the final answer."""
+    app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
+    register(client)
+
+    model = FakeListChatModel(
+        responses=[
+            "Use the available context, then answer directly.",
+            "Stream me.",
+        ]
+    )
+    monkeypatch.setattr(agent_service, "_build_chat_model", lambda settings, **kwargs: model)
+    monkeypatch.setattr(agent_service, "_safe_memory_context", lambda user, query: "")
+
+    with app.app_context():
+        user = User.query.one()
+        thread = ChatThread(user_id=user.id)
+        db.session.add(thread)
+        db.session.commit()
+
+        events = list(agent_service.stream_agent_response(user, thread, "How does this work?"))
+
+    answer_chunks = [event["text"] for event in events if event["type"] == "token"]
+    assert "".join(answer_chunks) == "Stream me."
+    assert len(answer_chunks) > 1
 
 
 def test_high_effort_custom_graph_can_create_memory_proposal(client, app, monkeypatch):
@@ -313,3 +371,29 @@ def test_prebuilt_agent_streams_reasoning_summary_text(monkeypatch, effort):
     )
 
     assert {"type": "reasoning_summary", "text": "Prepared the response."} in events
+
+
+def test_prebuilt_agent_separates_indexed_reasoning_markdown_blocks(monkeypatch):
+    """Ensure a new reasoning section starts as a distinct Markdown block."""
+    monkeypatch.setattr(
+        "langchain.agents.create_agent", lambda **kwargs: FakeMultipartReasoningAgent()
+    )
+    monkeypatch.setattr(agent_service, "_build_chat_model", lambda settings, **kwargs: object())
+    monkeypatch.setattr(agent_service, "_build_agent_tools", lambda user, thread, settings: [])
+
+    events = list(
+        agent_service._stream_langgraph_response(
+            SimpleNamespace(),
+            SimpleNamespace(id=1),
+            [],
+            {
+                "reasoning_effort": "high",
+                "reasoning_summaries_enabled": True,
+            },
+        )
+    )
+
+    reasoning = "".join(
+        event["text"] for event in events if event["type"] == "reasoning_summary"
+    )
+    assert reasoning == "Reviewed the context.\n\n## Risks"
