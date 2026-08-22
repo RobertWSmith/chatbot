@@ -320,13 +320,16 @@ def test_mcp_enabled_custom_graph_scopes_read_tools_and_bounds_research(client, 
 
 def test_reasoning_effort_selects_graph_workflow():
     """Ensure each effort level maps to the intended graph topology."""
-    assert agent_service._reasoning_workflow_for_effort("minimal") == ["answer"]
+    assert agent_service._reasoning_workflow_for_effort("none") == ["answer"]
     assert agent_service._reasoning_workflow_for_effort("medium") == [
         "gather_context",
         "plan",
         "answer",
     ]
     assert "alternative_draft" in agent_service._reasoning_workflow_for_effort("xhigh")
+    assert agent_service._reasoning_workflow_for_effort(
+        "max"
+    ) == agent_service._reasoning_workflow_for_effort("xhigh")
 
 
 def test_reasoning_summary_text_flattens_responses_api_blocks():
@@ -393,7 +396,5 @@ def test_prebuilt_agent_separates_indexed_reasoning_markdown_blocks(monkeypatch)
         )
     )
 
-    reasoning = "".join(
-        event["text"] for event in events if event["type"] == "reasoning_summary"
-    )
+    reasoning = "".join(event["text"] for event in events if event["type"] == "reasoning_summary")
     assert reasoning == "Reviewed the context.\n\n## Risks"

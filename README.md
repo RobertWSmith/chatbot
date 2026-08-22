@@ -76,14 +76,20 @@ By default, the app uses LangChain's prebuilt `create_agent` flow and passes the
 The app surfaces reasoning summaries when the configured model/provider supports them. It
 does not expose raw hidden reasoning.
 
+The Settings page defines the model and reasoning defaults copied into each new chat. The
+composer exposes those choices for the active chat, so users can switch either value between
+turns without changing their account defaults. Each user and assistant message records the
+exact selected pair in `message_telemetry`.
+
 Set `CUSTOM_REASONING_GRAPH_ENABLED=1` to use the app-owned LangGraph workflow instead.
 That path treats `reasoning_effort` as graph topology:
 
-- `minimal`: answer directly
+- `none`: answer directly
 - `low`: gather context, then answer
 - `medium`: gather context, plan, then answer
 - `high`: gather context, plan, draft, critique, finalize, then check memory proposals
 - `xhigh`: high effort plus an alternate draft before critique/finalization
+- `max`: the deepest available workflow, currently matching `xhigh`
 
 The custom graph currently uses `CHAT_MODEL_PROVIDER=openai`, but model construction is
 isolated in the service layer so additional providers can be added without changing the
@@ -93,7 +99,7 @@ When the user has MCP access, the custom graph makes a no-tool routing decision 
 answering. Only its dedicated `mcp_research` node receives MCP tools, and that node accepts
 only tools explicitly annotated as read-only and non-destructive. Planning, drafting,
 critique, finalization, and memory nodes use a separate unbound model with no MCP tools.
-High and xhigh workflows can return to research after critique, bounded by
+High, xhigh, and max workflows can return to research after critique, bounded by
 `CUSTOM_REASONING_MAX_RESEARCH_ROUNDS` (default `2`).
 
 ## Multi-tenant MCP access
@@ -197,6 +203,10 @@ produces matching `event=tool.call.start` and `event=tool.call.end` records with
 name, MCP provenance when available, run identifier, duration, and output size. MCP
 connection and discovery events use the `event=mcp.*` prefix. Prompt text and tool result
 content are not logged.
+
+The same invocations are persisted in `tool_call_telemetry` and linked to the assistant turn.
+Records include the tool name and source, run identifiers, status, duration, output type and
+size, and the privacy-filtered input summary. Raw tool output is never stored.
 
 `LOG_LEVEL` defaults to `INFO`. Tool argument values are omitted by default; set
 `TOOL_CALL_LOG_ARGUMENTS=1` only for local diagnosis when sanitized, 500-character-bounded

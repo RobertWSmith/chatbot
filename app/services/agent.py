@@ -27,7 +27,11 @@ DEFAULT_MAX_MCP_RESEARCH_ROUNDS = 2
 
 
 def stream_agent_response(
-    user: User, thread: ChatThread, prompt: str
+    user: User,
+    thread: ChatThread,
+    prompt: str,
+    settings: dict[str, Any] | None = None,
+    tool_call_records: list[dict[str, Any]] | None = None,
 ) -> Generator[dict, None, None]:
     """Stream response events for a user prompt.
 
@@ -35,11 +39,16 @@ def stream_agent_response(
         user: Authenticated user requesting a response.
         thread: Chat thread containing the prompt.
         prompt: Latest user message.
+        settings: Effective generation settings for this response. Uses the
+            user's account defaults when omitted.
+        tool_call_records: Mutable sink populated with privacy-conscious tool
+            invocation records for persistence with the assistant turn.
 
     Yields:
         Status, reasoning-summary, token, and memory-proposal events.
     """
-    settings = user.settings.merged()
+    settings = user.settings.merged() if settings is None else settings
+    tool_call_records = [] if tool_call_records is None else tool_call_records
     messages = _conversation_messages(user, thread, prompt)
     if not current_app.config.get("OPENAI_API_KEY"):
         logger.info(
@@ -65,16 +74,24 @@ def stream_agent_response(
             ",".join(item.namespace for item in authorized_namespaces) or "none",
         )
         if use_custom_graph:
-            yield from _stream_custom_reasoning_graph_response(user, thread, messages, settings)
+            yield from _stream_custom_reasoning_graph_response(
+                user, thread, messages, settings, tool_call_records
+            )
         else:
-            yield from _stream_langgraph_response(user, thread, messages, settings)
+            yield from _stream_langgraph_response(
+                user, thread, messages, settings, tool_call_records
+            )
     except ImportError as exc:
         yield {"type": "status", "text": "LangGraph dependencies are unavailable."}
         yield {"type": "token", "text": f"LangGraph is not installed: `{exc}`"}
 
 
 def _stream_langgraph_response(
-    user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
+    user: User,
+    thread: ChatThread,
+    messages: list[dict[str, str]],
+    settings: dict,
+    tool_call_records: list[dict[str, Any]] | None = None,
 ) -> Generator[dict, None, None]:
     """Bridge the asynchronous LangGraph stream into synchronous Flask code.
 
@@ -83,17 +100,23 @@ def _stream_langgraph_response(
         thread: Active chat thread.
         messages: Model-ready conversation messages.
         settings: Effective user settings.
+        tool_call_records: Sink for completed tool invocation records.
 
     Yields:
         Agent response events.
     """
+    tool_call_records = [] if tool_call_records is None else tool_call_records
     yield from _iterate_async_generator(
-        _astream_langgraph_response(user, thread, messages, settings)
+        _astream_langgraph_response(user, thread, messages, settings, tool_call_records)
     )
 
 
 async def _astream_langgraph_response(
-    user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
+    user: User,
+    thread: ChatThread,
+    messages: list[dict[str, str]],
+    settings: dict,
+    tool_call_records: list[dict[str, Any]],
 ) -> AsyncGenerator[dict, None]:
     """Run the standard tool-capable LangGraph agent asynchronously.
 
@@ -102,6 +125,7 @@ async def _astream_langgraph_response(
         thread: Active chat thread.
         messages: Model-ready conversation messages.
         settings: Effective user settings.
+        tool_call_records: Sink for completed tool invocation records.
 
     Yields:
         Normalized response events from LangGraph stream chunks.
@@ -145,6 +169,7 @@ async def _astream_langgraph_response(
         log_arguments=(
             bool(current_app.config.get("TOOL_CALL_LOG_ARGUMENTS")) if has_app_context() else False
         ),
+        record_sink=tool_call_records,
     )
     last_reasoning_part: tuple[Any, ...] | None = None
     reasoning_trailing_newlines = 0
@@ -248,7 +273,11 @@ class ReasoningState(TypedDict, total=False):
 
 
 def _stream_custom_reasoning_graph_response(
-    user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
+    user: User,
+    thread: ChatThread,
+    messages: list[dict[str, str]],
+    settings: dict,
+    tool_call_records: list[dict[str, Any]] | None = None,
 ) -> Generator[dict, None, None]:
     """Run the application-owned reasoning graph for a chat response.
 
@@ -257,17 +286,25 @@ def _stream_custom_reasoning_graph_response(
         thread: Active chat thread.
         messages: Model-ready conversation messages.
         settings: Effective user settings.
+        tool_call_records: Sink for completed tool invocation records.
 
     Yields:
         Status, reasoning-summary, answer, and memory-proposal events.
     """
+    tool_call_records = [] if tool_call_records is None else tool_call_records
     yield from _iterate_async_generator(
-        _astream_custom_reasoning_graph_response(user, thread, messages, settings)
+        _astream_custom_reasoning_graph_response(
+            user, thread, messages, settings, tool_call_records
+        )
     )
 
 
 async def _astream_custom_reasoning_graph_response(
-    user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
+    user: User,
+    thread: ChatThread,
+    messages: list[dict[str, str]],
+    settings: dict,
+    tool_call_records: list[dict[str, Any]],
 ) -> AsyncGenerator[dict, None]:
     """Run the application-owned graph with MCP tools scoped to research.
 
@@ -276,6 +313,7 @@ async def _astream_custom_reasoning_graph_response(
         thread: Active chat thread.
         messages: Model-ready conversation messages.
         settings: Effective user settings.
+        tool_call_records: Sink for completed tool invocation records.
 
     Yields:
         Status, reasoning-summary, answer, and memory-proposal events.
@@ -317,6 +355,7 @@ async def _astream_custom_reasoning_graph_response(
         log_arguments=(
             bool(current_app.config.get("TOOL_CALL_LOG_ARGUMENTS")) if has_app_context() else False
         ),
+        record_sink=tool_call_records,
     )
     mcp_research_agent = None
     if research_tools:
@@ -512,11 +551,20 @@ def _reasoning_workflow_for_effort(effort: str) -> list[str]:
         Ordered graph node names, defaulting to the medium workflow.
     """
     workflows = {
-        "minimal": ["answer"],
+        "none": ["answer"],
         "low": ["gather_context", "answer"],
         "medium": ["gather_context", "plan", "answer"],
         "high": ["gather_context", "plan", "draft", "critique", "finalize", "maybe_propose_memory"],
         "xhigh": [
+            "gather_context",
+            "plan",
+            "draft",
+            "alternative_draft",
+            "critique",
+            "finalize",
+            "maybe_propose_memory",
+        ],
+        "max": [
             "gather_context",
             "plan",
             "draft",

@@ -30,6 +30,13 @@ def test_tool_callback_logs_start_and_completion_without_argument_values(caplog)
     assert "private search" not in caplog.text
     assert "event=tool.call.end" in caplog.text
     assert "output_chars=13" in caplog.text
+    assert len(callback.records) == 1
+    assert callback.records[0]["status"] == "succeeded"
+    assert callback.records[0]["tool_name"] == "mcp_portal_web_search"
+    assert callback.records[0]["source"] == "mcp:portal"
+    assert callback.records[0]["input_summary"] == "keys:query"
+    assert callback.records[0]["output_type"] == "str"
+    assert callback.records[0]["output_chars"] == 13
 
 
 def test_tool_callback_sanitizes_opt_in_argument_logging(caplog):
@@ -75,3 +82,5 @@ def test_tool_callback_logs_error_type_without_error_message(caplog):
     assert "source=memory" in caplog.text
     assert "error_type=RuntimeError" in caplog.text
     assert "sensitive detail" not in caplog.text
+    assert callback.records[0]["status"] == "failed"
+    assert callback.records[0]["error_type"] == "RuntimeError"

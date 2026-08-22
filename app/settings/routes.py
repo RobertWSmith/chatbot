@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 
 from app.extensions import db
-from app.validation import validate_settings_update
+from app.validation import MODEL_OPTIONS, REASONING_OPTIONS, validate_settings_update
 
 bp = Blueprint("settings", __name__)
 
@@ -13,7 +13,12 @@ bp = Blueprint("settings", __name__)
 @login_required
 def settings_page():
     """Render the current user's effective settings."""
-    return render_template("settings.html", settings=current_user.settings.merged())
+    return render_template(
+        "settings.html",
+        settings=current_user.settings.merged(),
+        model_options=MODEL_OPTIONS,
+        reasoning_options=REASONING_OPTIONS,
+    )
 
 
 @bp.patch("/api/settings")

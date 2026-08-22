@@ -4,19 +4,19 @@
 <section class="settings-page">
   <div class="mb-6">
     <h1>Settings</h1>
-    <p class="max-w-2xl text-sm text-slate-600 dark:text-slate-300">Tune model behavior, Markdown rendering, memory tools, and privacy defaults for this account.</p>
+    <p class="max-w-2xl text-sm text-slate-600 dark:text-slate-300">Choose defaults for new chats, plus Markdown rendering, memory tools, and privacy preferences for this account.</p>
   </div>
   <form id="settings-form" class="settings-grid">
-    <label>Model
+    <label>Default model
       <select name="model_name">
-        {% for model in ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5-nano"] %}
+        {% for model in model_options %}
           <option value="{{ model }}" {% if settings.model_name == model %}selected{% endif %}>{{ model }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>Reasoning effort
+    <label>Default reasoning effort
       <select name="reasoning_effort">
-        {% for effort in ["minimal", "low", "medium", "high", "xhigh"] %}
+        {% for effort in reasoning_options %}
           <option value="{{ effort }}" {% if settings.reasoning_effort == effort %}selected{% endif %}>{{ effort }}</option>
         {% endfor %}
       </select>

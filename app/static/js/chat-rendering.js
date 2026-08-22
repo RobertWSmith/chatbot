@@ -117,6 +117,10 @@ function balanceMarkdown(source) {
 export function renderMarkdown(target, source) {
   const dirty = markdown.render(balanceMarkdown(normalizeMarkdown(source)));
   target.innerHTML = window.DOMPurify.sanitize(dirty);
+  target.querySelectorAll("a[href]").forEach((link) => {
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+  });
   target.querySelectorAll("pre code").forEach((block) => {
     window.hljs.highlightElement(block);
   });
