@@ -1,5 +1,27 @@
+from threading import Barrier, Lock
+from time import sleep
+
+import pytest
+from langchain.messages import AIMessage
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
+
 from app.models import ChatThread, User
-from app.services.agent import _build_agent_tools, _system_prompt
+from app.services import agent as agent_service
+from app.services.agent import _agent_run_config, _build_agent_tools, _system_prompt
+
+
+def _run_tool_calls(tools, tool_calls, max_concurrency=2):
+    builder = StateGraph(MessagesState)
+    builder.add_node("tools", ToolNode(tools))
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()
+    result = graph.invoke(
+        {"messages": [AIMessage(content="", tool_calls=tool_calls)]},
+        config={"max_concurrency": max_concurrency},
+    )
+    return result["messages"][1:]
 
 
 def test_agent_registers_duckduckgo_web_search_tool(app):
@@ -28,3 +50,103 @@ def test_system_prompt_explains_web_search_policy():
     assert "Use web_search for current events" in prompt
     assert "Use resolve_web_link after web_search" in prompt
     assert "include source links" in prompt
+    assert "issue them together in the same response" in prompt
+    assert "wait for web_search to return URLs" in prompt
+    assert "Call propose_memory one at a time" in prompt
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (0, 1),
+        (3, 3),
+        (100, 16),
+        ("invalid", 4),
+    ],
+)
+def test_agent_run_config_bounds_tool_concurrency(app, configured, expected):
+    with app.app_context():
+        app.config["TOOL_MAX_CONCURRENCY"] = configured
+        config = _agent_run_config("thread-1")
+
+    assert config == {
+        "configurable": {"thread_id": "thread-1"},
+        "max_concurrency": expected,
+    }
+
+
+def test_independent_web_resolutions_run_concurrently(app, monkeypatch):
+    rendezvous = Barrier(2)
+
+    def fake_resolver(url, question):
+        rendezvous.wait(timeout=2)
+        return f"{url}: {question}"
+
+    monkeypatch.setattr(agent_service, "fetch_web_link", fake_resolver)
+    with app.app_context():
+        user = User(id=1, email="parallel-web@example.com")
+        thread = ChatThread(id="thread-1", user_id=user.id)
+        tools = _build_agent_tools(user, thread, {"memory_enabled": True, "privacy": {}})
+        messages = _run_tool_calls(
+            tools,
+            [
+                {
+                    "name": "resolve_web_link",
+                    "args": {"url": "https://one.example", "question": "first"},
+                    "id": "call-1",
+                    "type": "tool_call",
+                },
+                {
+                    "name": "resolve_web_link",
+                    "args": {"url": "https://two.example", "question": "second"},
+                    "id": "call-2",
+                    "type": "tool_call",
+                },
+            ],
+        )
+
+    assert [message.tool_call_id for message in messages] == ["call-1", "call-2"]
+    assert [message.content for message in messages] == [
+        "https://one.example: first",
+        "https://two.example: second",
+    ]
+
+
+def test_memory_tools_serialize_shared_database_session(app, monkeypatch):
+    activity_lock = Lock()
+    activity = {"current": 0, "maximum": 0}
+
+    def fake_search(_user_id, _query, limit):
+        assert limit == 5
+        with activity_lock:
+            activity["current"] += 1
+            activity["maximum"] = max(activity["maximum"], activity["current"])
+        sleep(0.05)
+        with activity_lock:
+            activity["current"] -= 1
+        return []
+
+    monkeypatch.setattr(agent_service, "search_long_term_memories", fake_search)
+    with app.app_context():
+        user = User(id=1, email="serial-memory@example.com")
+        thread = ChatThread(id="thread-1", user_id=user.id)
+        tools = _build_agent_tools(user, thread, {"memory_enabled": True, "privacy": {}})
+        _run_tool_calls(
+            tools,
+            [
+                {
+                    "name": "recall_user_memory",
+                    "args": {"query": "first"},
+                    "id": "call-1",
+                    "type": "tool_call",
+                },
+                {
+                    "name": "recall_user_memory",
+                    "args": {"query": "second"},
+                    "id": "call-2",
+                    "type": "tool_call",
+                },
+            ],
+        )
+
+    assert activity["maximum"] == 1

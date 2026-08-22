@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Generator
+from threading import Lock
 from typing import Any
 
 from flask import current_app
@@ -14,6 +15,9 @@ from app.services.conversation_summary import (
 )
 from app.services.rag_memory import format_memory_search_results, search_long_term_memories
 from app.services.web_resolver import resolve_web_link as fetch_web_link
+
+DEFAULT_TOOL_MAX_CONCURRENCY = 4
+MAX_TOOL_MAX_CONCURRENCY = 16
 
 
 def stream_agent_response(user: User, thread: ChatThread, prompt: str) -> Generator[dict, None, None]:
@@ -41,6 +45,7 @@ def _stream_langgraph_response(
         model=settings["model_name"],
         api_key=current_app.config.get("OPENAI_API_KEY") or None,
         model_kwargs={
+            "parallel_tool_calls": True,
             "reasoning": {
                 "effort": settings["reasoning_effort"],
                 "summary": "auto" if settings.get("reasoning_summaries_enabled") else None,
@@ -59,7 +64,7 @@ def _stream_langgraph_response(
         {"messages": messages},
         stream_mode=["messages", "updates"],
         version="v2",
-        config={"configurable": {"thread_id": thread.id}},
+        config=_agent_run_config(thread.id),
     ):
         if chunk["type"] == "messages":
             message_chunk, _metadata = chunk["data"]
@@ -107,12 +112,19 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
     from langchain.tools import tool
     from langchain_community.tools import DuckDuckGoSearchRun
 
+    # LangGraph runs tool calls from the same model turn concurrently. Flask-SQLAlchemy's
+    # scoped session must not be used by multiple worker threads at once, so memory tools
+    # share a per-agent lock while network-only tools remain concurrent.
+    memory_tool_lock = Lock()
+
     @tool
     def recall_user_memory(query: str) -> str:
         """Retrieve approved long-term memories with vector similarity search."""
         if not settings.get("memory_enabled", True):
             return "Memory is disabled for this user."
-        return format_memory_search_results(search_long_term_memories(user.id, query, limit=5))
+        with memory_tool_lock:
+            results = search_long_term_memories(user.id, query, limit=5)
+            return format_memory_search_results(results)
 
     @tool
     def propose_memory(memory_text: str, category: str = "preference", confidence: float = 0.5) -> str:
@@ -121,20 +133,24 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
             return "Memory is disabled for this user."
         if not settings.get("privacy", {}).get("allow_memory_proposals", True):
             return "The user has disabled memory proposals."
-        proposal = PendingMemory(
-            user_id=user.id,
-            source_thread_id=thread.id,
-            memory_text=memory_text[:4000],
-            category=category[:80] or "preference",
-            confidence=max(0.0, min(float(confidence), 1.0)),
-        )
-        db.session.add(proposal)
-        db.session.commit()
-        return f"Created memory proposal {proposal.id} for user review."
+        with memory_tool_lock:
+            proposal = PendingMemory(
+                user_id=user.id,
+                source_thread_id=thread.id,
+                memory_text=memory_text[:4000],
+                category=category[:80] or "preference",
+                confidence=max(0.0, min(float(confidence), 1.0)),
+            )
+            db.session.add(proposal)
+            db.session.commit()
+            return f"Created memory proposal {proposal.id} for user review."
 
     @tool
     def resolve_web_link(url: str, question: str = "") -> str:
-        """Fetch a public web result URL and extract readable content relevant to the question."""
+        """Fetch a known public result URL and extract content relevant to a question.
+
+        Independent known URLs may be fetched together.
+        """
         return fetch_web_link(url, question)
 
     web_search = DuckDuckGoSearchRun(
@@ -142,10 +158,27 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
         description=(
             "Search DuckDuckGo for current or external web information. "
             "Use this when the user asks about recent events, facts that may have changed, "
-            "or topics that require sources outside this chatbot's conversation history."
+            "or topics that require sources outside this chatbot's conversation history. "
+            "Independent queries may be searched together in the same model turn."
         ),
     )
     return [recall_user_memory, propose_memory, web_search, resolve_web_link]
+
+
+def _agent_run_config(thread_id: str) -> dict[str, Any]:
+    configured = current_app.config.get(
+        "TOOL_MAX_CONCURRENCY",
+        DEFAULT_TOOL_MAX_CONCURRENCY,
+    )
+    try:
+        max_concurrency = int(configured)
+    except (TypeError, ValueError):
+        max_concurrency = DEFAULT_TOOL_MAX_CONCURRENCY
+    max_concurrency = max(1, min(max_concurrency, MAX_TOOL_MAX_CONCURRENCY))
+    return {
+        "configurable": {"thread_id": thread_id},
+        "max_concurrency": max_concurrency,
+    }
 
 
 def _stream_demo_response(
@@ -204,6 +237,11 @@ def _system_prompt(settings: dict[str, Any]) -> str:
         "that is not available from the conversation. Summarize search results plainly and "
         "include source links when the tool returns them. Use resolve_web_link after web_search "
         "when a search result needs to be opened to answer the user's specific question. "
+        "When two or more tool calls are independent and all of their arguments are already "
+        "known, issue them together in the same response so they can run concurrently. Do not "
+        "guess arguments or parallelize across a dependency: wait for web_search to return URLs "
+        "before calling resolve_web_link. Call propose_memory one at a time and never include it "
+        "in a parallel tool batch. "
         "Use recall_user_memory as a RAG retriever over approved long-term memories "
         "when user-specific remembered context would help. "
         "Use the rolling conversation summary plus prior messages in this thread as "

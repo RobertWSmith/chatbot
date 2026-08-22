@@ -21,6 +21,7 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    MEMORY_EMBEDDING_MODEL=text-embedding-3-small
    MEMORY_EMBEDDING_DIMENSIONS=1536
    CONVERSATION_HISTORY_LIMIT=24
+   TOOL_MAX_CONCURRENCY=4
    ```
 
 4. Run migrations:
@@ -48,3 +49,11 @@ The Docker Compose database uses `pgvector/pgvector:0.8.2-pg17`, and migrations 
 ## Reasoning
 
 The app surfaces reasoning summaries when the configured model/provider supports them. It does not expose raw hidden reasoning.
+
+## Tool concurrency
+
+Independent tool calls emitted in the same model turn run concurrently through LangGraph, up to
+`TOOL_MAX_CONCURRENCY` workers (default `4`, clamped to `1`–`16`). Calls with dependencies still
+run in separate turns—for example, web search must return a URL before the resolver can open it.
+Database-backed memory tools are serialized within each agent run because they share a
+Flask-SQLAlchemy session; network-only search and URL resolution calls remain concurrent.
