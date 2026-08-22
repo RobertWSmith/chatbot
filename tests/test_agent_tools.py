@@ -8,7 +8,13 @@ from langgraph.prebuilt import ToolNode
 
 from app.models import ChatThread, User
 from app.services import agent as agent_service
-from app.services.agent import _agent_run_config, _build_agent_tools, _system_prompt
+from app.services.agent import (
+    _agent_run_config,
+    _build_agent_tools,
+    _build_web_search_api,
+    _run_web_search,
+    _system_prompt,
+)
 
 
 def _run_tool_calls(tools, tool_calls, max_concurrency=2):
@@ -42,6 +48,45 @@ def test_agent_registers_duckduckgo_web_search_tool(app):
     resolver = next(tool for tool in tools if tool.name == "resolve_web_link")
     assert "URL" in resolver.description
     assert "question" in resolver.description
+
+
+def test_web_search_uses_duckduckgo_backend_with_valid_region():
+    search_api = _build_web_search_api()
+
+    assert search_api.backend == "duckduckgo"
+    assert search_api.region == "us-en"
+    assert search_api.time is None
+
+
+def test_web_search_returns_source_urls():
+    class SearchAPI:
+        def results(self, query, max_results, source):
+            assert query == "Agents SDK tracing"
+            assert max_results == 5
+            assert source == "text"
+            return [
+                {
+                    "title": "Agents SDK",
+                    "link": "https://platform.openai.com/docs/guides/agents-sdk",
+                    "snippet": "Build agents with tools, handoffs, and tracing.",
+                }
+            ]
+
+    result = _run_web_search(SearchAPI(), "Agents SDK tracing")
+
+    assert "Title: Agents SDK" in result
+    assert "URL: https://platform.openai.com/docs/guides/agents-sdk" in result
+    assert "Snippet: Build agents with tools" in result
+
+
+def test_web_search_failure_is_returned_as_tool_result():
+    class FailingSearchAPI:
+        def results(self, query, max_results, source):
+            raise TimeoutError("operation timed out")
+
+    result = _run_web_search(FailingSearchAPI(), "Agents SDK tracing")
+
+    assert result == "Web search is temporarily unavailable. Ask the user to retry shortly."
 
 
 def test_system_prompt_explains_web_search_policy():

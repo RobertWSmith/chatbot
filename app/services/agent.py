@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Generator
 from threading import Lock
@@ -21,15 +22,20 @@ from app.services.web_resolver import resolve_web_link as fetch_web_link
 
 DEFAULT_TOOL_MAX_CONCURRENCY = 4
 MAX_TOOL_MAX_CONCURRENCY = 16
+WEB_SEARCH_MAX_RESULTS = 5
+
+LOGGER = logging.getLogger(__name__)
 
 
 def stream_agent_response(
     user: User, thread: ChatThread, prompt: str
 ) -> Generator[dict, None, None]:
     settings = user.settings.merged()
-    settings["reasoning_provider"] = (
-        thread.reasoning_provider or settings["reasoning_provider"]
-    )
+    for key in ("model_name", "reasoning_effort", "reasoning_provider"):
+        if selected := getattr(thread, key, None):
+            if key == "reasoning_effort" and selected == "minimal":
+                selected = "none"
+            settings[key] = selected
     messages = _conversation_messages(user, thread, prompt)
     if not current_app.config.get("OPENAI_API_KEY"):
         yield from _stream_demo_response(user, thread, prompt, settings, messages)
@@ -150,7 +156,7 @@ def _build_chat_model(settings: dict, *, provider_reasoning: bool):
 
 def _reasoning_workflow_for_effort(effort: str) -> list[str]:
     workflows = {
-        "minimal": ["answer"],
+        "none": ["answer"],
         "low": ["gather_context", "answer"],
         "medium": ["gather_context", "plan", "answer"],
         "high": [
@@ -162,6 +168,15 @@ def _reasoning_workflow_for_effort(effort: str) -> list[str]:
             "maybe_propose_memory",
         ],
         "xhigh": [
+            "gather_context",
+            "plan",
+            "draft",
+            "alternative_draft",
+            "critique",
+            "finalize",
+            "maybe_propose_memory",
+        ],
+        "max": [
             "gather_context",
             "plan",
             "draft",
@@ -470,7 +485,8 @@ def _conversation_messages(
 
 def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[Any]:
     from langchain.tools import tool
-    from langchain_community.tools import DuckDuckGoSearchRun
+
+    search_api = _build_web_search_api()
 
     # LangGraph runs tool calls from the same model turn concurrently. Flask-SQLAlchemy's
     # scoped session must not be used by multiple worker threads at once, so memory tools
@@ -515,16 +531,57 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
         """
         return fetch_web_link(url, question)
 
-    web_search = DuckDuckGoSearchRun(
-        name="web_search",
-        description=(
-            "Search DuckDuckGo for current or external web information. "
-            "Use this when the user asks about recent events, facts that may have changed, "
-            "or topics that require sources outside this chatbot's conversation history. "
-            "Independent queries may be searched together in the same model turn."
-        ),
-    )
+    @tool
+    def web_search(query: str) -> str:
+        """Search DuckDuckGo for current information and return titled result URLs.
+
+        Use for recent or external facts. Independent queries may be searched together.
+        """
+        return _run_web_search(search_api, query)
+
     return [recall_user_memory, propose_memory, web_search, resolve_web_link]
+
+
+def _build_web_search_api():
+    from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+
+    # DDGS's "auto" backend includes Wikipedia. Combined with LangChain's default
+    # "wt-wt" region, that backend constructs the invalid host wt.wikipedia.org.
+    return DuckDuckGoSearchAPIWrapper(
+        region="us-en",
+        safesearch="moderate",
+        time=None,
+        max_results=WEB_SEARCH_MAX_RESULTS,
+        backend="duckduckgo",
+    )
+
+
+def _run_web_search(search_api: Any, query: str) -> str:
+    try:
+        results = search_api.results(
+            query,
+            max_results=WEB_SEARCH_MAX_RESULTS,
+            source="text",
+        )
+    except Exception as exc:  # noqa: BLE001 - web search is optional to the response
+        LOGGER.warning("Web search failed: %s", exc)
+        return "Web search is temporarily unavailable. Ask the user to retry shortly."
+
+    if not results:
+        return "No useful web search results were found."
+
+    formatted_results = []
+    for result in results:
+        formatted_results.append(
+            "\n".join(
+                (
+                    f"Title: {result.get('title', '')}",
+                    f"URL: {result.get('link', '')}",
+                    f"Snippet: {result.get('snippet', '')}",
+                )
+            )
+        )
+    return "\n\n".join(formatted_results)
 
 
 def _agent_run_config(thread_id: str) -> dict[str, Any]:

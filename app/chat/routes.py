@@ -15,7 +15,12 @@ from flask_login import current_user, login_required
 from app.extensions import db
 from app.models import ChatMessage, ChatThread, MessageTelemetry, utcnow
 from app.services.agent import stream_agent_response
-from app.validation import REASONING_PROVIDER_OPTIONS, validate_settings_update
+from app.validation import (
+    MODEL_OPTIONS,
+    REASONING_OPTIONS,
+    REASONING_PROVIDER_OPTIONS,
+    validate_settings_update,
+)
 
 bp = Blueprint("chat", __name__)
 
@@ -45,6 +50,8 @@ def create_thread():
                 "thread": {
                     "id": thread.id,
                     "title": thread.title,
+                    "model_name": thread.model_name,
+                    "reasoning_effort": thread.reasoning_effort,
                     "reasoning_provider": thread.reasoning_provider,
                 }
             }
@@ -63,27 +70,33 @@ def send_message(thread_id: str):
     if not prompt:
         return jsonify({"error": "Message is required."}), 400
 
-    account_settings = current_user.settings.merged()
-    reasoning_provider = (
-        thread.reasoning_provider or account_settings["reasoning_provider"]
-    )
-    if "reasoning_provider" in payload:
-        try:
-            validated = validate_settings_update(
-                account_settings,
-                {"reasoning_provider": payload["reasoning_provider"]},
-            )
-        except ValueError as exc:
-            return jsonify({"errors": exc.args[0]}), 400
-        reasoning_provider = validated["reasoning_provider"]
-    thread.reasoning_provider = reasoning_provider
+    generation_patch = {
+        key: payload[key]
+        for key in ("model_name", "reasoning_effort", "reasoning_provider")
+        if key in payload
+    }
+    try:
+        generation_settings = validate_settings_update(
+            _thread_generation_settings(thread, current_user.settings.merged()),
+            generation_patch,
+        )
+    except ValueError as exc:
+        return jsonify({"errors": exc.args[0]}), 400
+
+    thread.model_name = generation_settings["model_name"]
+    thread.reasoning_effort = generation_settings["reasoning_effort"]
+    thread.reasoning_provider = generation_settings["reasoning_provider"]
+    generation_metadata = {
+        key: generation_settings[key]
+        for key in ("model_name", "reasoning_effort", "reasoning_provider")
+    }
 
     user_message = ChatMessage(
         thread_id=thread.id,
         user_id=current_user.id,
         role="user",
         content=prompt,
-        message_metadata={"reasoning_provider": reasoning_provider},
+        message_metadata=generation_metadata,
     )
     db.session.add(user_message)
     if thread.title == "New chat":
@@ -98,6 +111,11 @@ def send_message(thread_id: str):
             request_received_at=request_received_at,
             message_persisted_at=utcnow(),
             completed_at=utcnow(),
+            model_name=generation_settings["model_name"],
+            reasoning_effort=generation_settings["reasoning_effort"],
+            telemetry_metadata={
+                "reasoning_provider": generation_settings["reasoning_provider"]
+            },
         )
     )
     db.session.commit()
@@ -125,7 +143,7 @@ def send_message(thread_id: str):
                 role="assistant",
                 content="".join(assistant_text).strip(),
                 reasoning_summary="".join(reasoning_text).strip() or None,
-                message_metadata={"reasoning_provider": reasoning_provider},
+                message_metadata=generation_metadata,
             )
             db.session.add(assistant_message)
             db.session.flush()
@@ -141,6 +159,11 @@ def send_message(thread_id: str):
                     first_token_at=first_token_at,
                     completed_at=utcnow(),
                     token_count=token_count,
+                    model_name=generation_settings["model_name"],
+                    reasoning_effort=generation_settings["reasoning_effort"],
+                    telemetry_metadata={
+                        "reasoning_provider": generation_settings["reasoning_provider"]
+                    },
                 )
             )
             db.session.commit()
@@ -172,25 +195,37 @@ def _user_threads():
 
 
 def _create_thread() -> ChatThread:
+    defaults = current_user.settings.merged()
     thread = ChatThread(
         user_id=current_user.id,
-        reasoning_provider=current_user.settings.merged()["reasoning_provider"],
+        model_name=defaults["model_name"],
+        reasoning_effort=defaults["reasoning_effort"],
+        reasoning_provider=defaults["reasoning_provider"],
     )
     db.session.add(thread)
     db.session.commit()
     return thread
 
 
+def _thread_generation_settings(thread: ChatThread, user_settings: dict) -> dict:
+    settings = dict(user_settings)
+    for key in ("model_name", "reasoning_effort", "reasoning_provider"):
+        if selected := getattr(thread, key, None):
+            if key == "reasoning_effort" and selected == "minimal":
+                selected = "none"
+            settings[key] = selected
+    return settings
+
+
 def _render_chat(selected: ChatThread, threads: list[ChatThread]):
-    reasoning_provider = (
-        selected.reasoning_provider
-        or current_user.settings.merged()["reasoning_provider"]
-    )
+    chat_settings = _thread_generation_settings(selected, current_user.settings.merged())
     return render_template(
         "chat.html",
         threads=threads,
         selected_thread=selected,
-        reasoning_provider=reasoning_provider,
+        chat_settings=chat_settings,
+        model_options=MODEL_OPTIONS,
+        reasoning_options=REASONING_OPTIONS,
         reasoning_provider_options=REASONING_PROVIDER_OPTIONS,
     )
 

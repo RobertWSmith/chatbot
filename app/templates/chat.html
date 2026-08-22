@@ -47,19 +47,41 @@
   </div>
   <div id="stream-status" class="stream-status" aria-live="polite"></div>
   <form id="chat-form" class="composer">
-    <label class="composer-setting" for="reasoning-provider-select">
-      <span>Reasoning provider</span>
-      <select id="reasoning-provider-select" name="reasoning_provider">
-        {% for value, label in reasoning_provider_options %}
-          <option value="{{ value }}" {% if reasoning_provider == value %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <div class="relative min-w-0">
+    <div class="composer-surface">
       <textarea id="message-input" name="message" rows="2" placeholder="Ask anything..." required></textarea>
-      <span class="pointer-events-none absolute bottom-3 right-3 hidden rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 sm:inline">Ctrl Enter</span>
+      <div class="composer-toolbar">
+        <div class="generation-controls" aria-label="Response settings">
+          <label class="generation-control" title="Reasoning provider for this chat">
+            <span>Provider</span>
+            <select id="reasoning-provider-select" name="reasoning_provider" aria-label="Reasoning provider for this chat">
+              {% for value, label in reasoning_provider_options %}
+                <option value="{{ value }}" {% if chat_settings.reasoning_provider == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="generation-control" title="Model for this chat">
+            <span>Model</span>
+            <select id="model-select" name="model_name" aria-label="Model for this chat">
+              {% for model in model_options %}
+                <option value="{{ model }}" {% if chat_settings.model_name == model %}selected{% endif %}>{{ model }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="generation-control" title="Reasoning effort for this chat">
+            <span>Effort</span>
+            <select id="reasoning-select" name="reasoning_effort" aria-label="Reasoning effort for this chat">
+              {% for effort in reasoning_options %}
+                <option value="{{ effort }}" {% if chat_settings.reasoning_effort == effort %}selected{% endif %}>{{ effort }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <div class="composer-actions">
+          <span class="composer-shortcut">Ctrl Enter</span>
+          <button class="primary send-button" type="submit">Send</button>
+        </div>
+      </div>
     </div>
-    <button class="primary send-button" type="submit">Send</button>
   </form>
 </section>
 {% endblock %}

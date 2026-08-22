@@ -117,6 +117,8 @@ class UserSettings(db.Model):
     def merged(self) -> dict:
         merged = default_settings()
         merged.update(self.data or {})
+        if merged["reasoning_effort"] == "minimal":
+            merged["reasoning_effort"] = "none"
         merged["markdown_options"] = {
             **default_settings()["markdown_options"],
             **(self.data or {}).get("markdown_options", {}),
@@ -134,6 +136,8 @@ class ChatThread(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = db.Column(db.String(180), nullable=False, default="New chat")
+    model_name = db.Column(db.String(80), nullable=True)
+    reasoning_effort = db.Column(db.String(32), nullable=True)
     reasoning_provider = db.Column(db.String(32), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -217,6 +221,8 @@ class MessageTelemetry(db.Model):
     first_token_at = db.Column(db.DateTime(timezone=True), nullable=True)
     completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     token_count = db.Column(db.Integer, nullable=False, default=0)
+    model_name = db.Column(db.String(80), nullable=True)
+    reasoning_effort = db.Column(db.String(32), nullable=True)
     telemetry_metadata = db.Column(db.JSON, nullable=False, default=dict)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 

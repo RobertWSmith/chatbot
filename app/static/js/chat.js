@@ -83,6 +83,8 @@ if (form) {
   const input = document.querySelector("#message-input");
   const submitButton = form.querySelector("button[type='submit']");
   const reasoningProviderSelect = document.querySelector("#reasoning-provider-select");
+  const modelSelect = document.querySelector("#model-select");
+  const reasoningSelect = document.querySelector("#reasoning-select");
 
   function resizeComposer() {
     input.style.height = "auto";
@@ -93,6 +95,8 @@ if (form) {
     input.disabled = isStreaming;
     submitButton.disabled = isStreaming;
     reasoningProviderSelect.disabled = isStreaming;
+    modelSelect.disabled = isStreaming;
+    reasoningSelect.disabled = isStreaming;
     submitButton.textContent = isStreaming ? "Sending" : "Send";
     form.classList.toggle("is-streaming", isStreaming);
   }
@@ -130,6 +134,8 @@ if (form) {
         body: JSON.stringify({
           message,
           reasoning_provider: reasoningProviderSelect.value,
+          model_name: modelSelect.value,
+          reasoning_effort: reasoningSelect.value,
         }),
       });
       if (!response.ok) {

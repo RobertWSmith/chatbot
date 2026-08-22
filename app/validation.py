@@ -4,14 +4,19 @@ from copy import deepcopy
 
 from .models import default_settings
 
-ALLOWED_MODELS = {
+MODEL_OPTIONS = (
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.3-codex",
     "gpt-5-nano",
-}
-ALLOWED_REASONING = {"minimal", "low", "medium", "high", "xhigh"}
+)
+ALLOWED_MODELS = set(MODEL_OPTIONS)
+REASONING_OPTIONS = ("none", "low", "medium", "high", "xhigh", "max")
+ALLOWED_REASONING = set(REASONING_OPTIONS)
 REASONING_PROVIDER_OPTIONS = (("openai", "OpenAI"), ("langgraph", "LangGraph"))
 ALLOWED_REASONING_PROVIDERS = {value for value, _label in REASONING_PROVIDER_OPTIONS}
 ALLOWED_THEMES = {"system", "light", "dark"}
