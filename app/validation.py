@@ -5,13 +5,16 @@ from copy import deepcopy
 from .models import default_settings
 
 ALLOWED_MODELS = {
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.3-codex",
     "gpt-5-nano",
 }
-ALLOWED_REASONING = {"minimal", "low", "medium", "high", "xhigh"}
+ALLOWED_REASONING = {"none", "low", "medium", "high", "xhigh", "max"}
 ALLOWED_THEMES = {"system", "light", "dark"}
 ALLOWED_FONT_SIZES = {"small", "medium", "large"}
 ALLOWED_SPEEDS = {"slow", "normal", "fast"}

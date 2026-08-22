@@ -334,6 +334,8 @@ class UserSettings(db.Model):
                 **defaults[nested_key],
                 **overrides.get(nested_key, {}),
             }
+        if merged.get("reasoning_effort") == "minimal":
+            merged["reasoning_effort"] = "none"
         return merged
 
 

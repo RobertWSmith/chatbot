@@ -9,14 +9,14 @@
   <form id="settings-form" class="settings-grid">
     <label>Model
       <select name="model_name">
-        {% for model in ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5-nano"] %}
+        {% for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5-nano"] %}
           <option value="{{ model }}" {% if settings.model_name == model %}selected{% endif %}>{{ model }}</option>
         {% endfor %}
       </select>
     </label>
     <label>Reasoning effort
       <select name="reasoning_effort">
-        {% for effort in ["minimal", "low", "medium", "high", "xhigh"] %}
+        {% for effort in ["none", "low", "medium", "high", "xhigh", "max"] %}
           <option value="{{ effort }}" {% if settings.reasoning_effort == effort %}selected{% endif %}>{{ effort }}</option>
         {% endfor %}
       </select>

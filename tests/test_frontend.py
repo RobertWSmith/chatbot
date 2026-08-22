@@ -31,3 +31,26 @@ def test_browser_module_dependencies_are_served(client):
         response = client.get(f"/static/js/{asset}")
         assert response.status_code == 200
         assert response.mimetype == "text/javascript"
+
+
+def test_markdown_links_open_in_new_tabs(client):
+    """Ensure rendered chat links preserve the current conversation tab."""
+    response = client.get("/static/js/chat-rendering.js")
+
+    assert response.status_code == 200
+    assert b'link.setAttribute("target", "_blank")' in response.data
+    assert b'link.setAttribute("rel", "noopener noreferrer")' in response.data
+
+
+def test_settings_page_exposes_gpt_5_6_options(client):
+    """Ensure the settings selectors expose GPT-5.6 models and reasoning efforts."""
+    register(client)
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+        assert f'value="{model}"'.encode() in response.data
+    for effort in ("none", "low", "medium", "high", "xhigh", "max"):
+        assert f'value="{effort}"'.encode() in response.data
+    assert b'value="minimal"' not in response.data

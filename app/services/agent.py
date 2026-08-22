@@ -512,11 +512,20 @@ def _reasoning_workflow_for_effort(effort: str) -> list[str]:
         Ordered graph node names, defaulting to the medium workflow.
     """
     workflows = {
-        "minimal": ["answer"],
+        "none": ["answer"],
         "low": ["gather_context", "answer"],
         "medium": ["gather_context", "plan", "answer"],
         "high": ["gather_context", "plan", "draft", "critique", "finalize", "maybe_propose_memory"],
         "xhigh": [
+            "gather_context",
+            "plan",
+            "draft",
+            "alternative_draft",
+            "critique",
+            "finalize",
+            "maybe_propose_memory",
+        ],
+        "max": [
             "gather_context",
             "plan",
             "draft",
