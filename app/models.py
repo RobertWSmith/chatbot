@@ -85,6 +85,11 @@ class User(UserMixin, db.Model):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    tool_call_telemetry = db.relationship(
+        "ToolCallTelemetry",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     group_memberships = db.relationship(
         "GroupMembership",
         back_populates="user",
@@ -347,6 +352,8 @@ class ChatThread(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = db.Column(db.String(180), nullable=False, default="New chat")
+    model_name = db.Column(db.String(80), nullable=True)
+    reasoning_effort = db.Column(db.String(32), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -374,6 +381,11 @@ class ChatThread(db.Model):
         back_populates="thread",
         cascade="all, delete-orphan",
     )
+    tool_call_telemetry = db.relationship(
+        "ToolCallTelemetry",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
 
 
 class ChatMessage(db.Model):
@@ -398,6 +410,12 @@ class ChatMessage(db.Model):
         back_populates="message",
         uselist=False,
         cascade="all, delete-orphan",
+    )
+    tool_calls = db.relationship(
+        "ToolCallTelemetry",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="ToolCallTelemetry.started_at",
     )
     conversation_memories = db.relationship(
         "ConversationMemory",
@@ -433,12 +451,52 @@ class MessageTelemetry(db.Model):
     first_token_at = db.Column(db.DateTime(timezone=True), nullable=True)
     completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     token_count = db.Column(db.Integer, nullable=False, default=0)
+    model_name = db.Column(db.String(80), nullable=True)
+    reasoning_effort = db.Column(db.String(32), nullable=True)
     telemetry_metadata = db.Column(db.JSON, nullable=False, default=dict)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     message = db.relationship("ChatMessage", back_populates="telemetry")
     user = db.relationship("User", back_populates="message_telemetry")
     thread = db.relationship("ChatThread", back_populates="message_telemetry")
+
+
+class ToolCallTelemetry(db.Model):
+    """Record one privacy-conscious tool invocation for an assistant turn."""
+
+    __tablename__ = "tool_call_telemetry"
+    __table_args__ = (
+        db.Index("ix_tool_call_telemetry_thread_started", "thread_id", "started_at"),
+        db.Index("ix_tool_call_telemetry_message_started", "message_id", "started_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(
+        db.Integer,
+        db.ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    thread_id = db.Column(
+        db.String(36), db.ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id = db.Column(db.String(36), unique=True, nullable=False)
+    parent_run_id = db.Column(db.String(36), nullable=True)
+    tool_name = db.Column(db.String(255), nullable=False)
+    source = db.Column(db.String(255), nullable=False)
+    input_summary = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(32), nullable=False)
+    duration_ms = db.Column(db.Integer, nullable=True)
+    output_type = db.Column(db.String(120), nullable=True)
+    output_chars = db.Column(db.Integer, nullable=True)
+    error_type = db.Column(db.String(255), nullable=True)
+    started_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    message = db.relationship("ChatMessage", back_populates="tool_calls")
+    user = db.relationship("User", back_populates="tool_call_telemetry")
+    thread = db.relationship("ChatThread", back_populates="tool_call_telemetry")
 
 
 class ConversationMemorySnapshot(db.Model):

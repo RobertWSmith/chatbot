@@ -268,13 +268,87 @@ a {
 }
 
 .composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: end;
   padding: 16px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-muted) 70%, var(--surface));
+}
+
+.composer-surface {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.composer-surface:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 13%, transparent),
+    0 10px 30px rgba(15, 23, 42, 0.07);
+}
+
+.composer-toolbar,
+.generation-controls,
+.composer-actions {
+  display: flex;
+  align-items: center;
+}
+
+.composer-toolbar {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px 10px 12px;
+}
+
+.generation-controls {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.generation-control {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding-left: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.generation-control select {
+  width: auto;
+  min-width: 0;
+  min-height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 4px 24px 4px 2px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+  box-shadow: none;
+}
+
+.generation-control select:focus {
+  box-shadow: none;
+}
+
+.composer-actions {
+  flex: 0 0 auto;
+  gap: 9px;
+}
+
+.composer-shortcut {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 textarea,
@@ -303,7 +377,14 @@ select:focus {
   min-height: 58px;
   max-height: 220px;
   resize: none;
-  padding-right: 92px;
+  border: 0;
+  border-radius: 0;
+  padding: 14px 16px 8px;
+  box-shadow: none;
+}
+
+#message-input:focus {
+  box-shadow: none;
 }
 
 button,
@@ -1381,8 +1462,7 @@ button:disabled,
     padding: 18px;
   }
 
-  .settings-grid,
-  .composer {
+  .settings-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1413,6 +1493,27 @@ button:disabled,
 }
 
 @media (max-width: 640px) {
+  .composer {
+    padding: 10px;
+  }
+
+  .composer-toolbar {
+    align-items: flex-end;
+  }
+
+  .generation-controls {
+    display: grid;
+  }
+
+  .generation-control {
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .composer-shortcut {
+    display: none;
+  }
+
   .site-header-inner {
     gap: 8px;
   }

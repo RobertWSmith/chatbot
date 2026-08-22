@@ -9,8 +9,16 @@ from flask import Blueprint, Response, jsonify, render_template, request, stream
 from flask_login import current_user, login_required
 
 from app.extensions import db
-from app.models import ChatMessage, ChatThread, MessageTelemetry, User, utcnow
+from app.models import (
+    ChatMessage,
+    ChatThread,
+    MessageTelemetry,
+    ToolCallTelemetry,
+    User,
+    utcnow,
+)
 from app.services.agent import stream_agent_response
+from app.validation import MODEL_OPTIONS, REASONING_OPTIONS, validate_settings_update
 
 bp = Blueprint("chat", __name__)
 logger = logging.getLogger(__name__)
@@ -21,8 +29,12 @@ logger = logging.getLogger(__name__)
 def chat_home():
     """Render the most recently updated chat, creating one when needed."""
     threads = _user_threads()
-    selected = threads[0] if threads else _create_thread()
-    return render_template("chat.html", threads=threads, selected_thread=selected)
+    if threads:
+        selected = threads[0]
+    else:
+        selected = _create_thread()
+        threads = [selected]
+    return _render_chat(selected, threads)
 
 
 @bp.get("/chat/<thread_id>")
@@ -34,7 +46,7 @@ def chat_thread(thread_id: str):
         thread_id: Chat-thread identifier from the URL.
     """
     selected = _get_thread_or_404(thread_id)
-    return render_template("chat.html", threads=_user_threads(), selected_thread=selected)
+    return _render_chat(selected, _user_threads())
 
 
 @bp.post("/api/chat/threads")
@@ -42,7 +54,19 @@ def chat_thread(thread_id: str):
 def create_thread():
     """Create an empty chat thread for the current user."""
     thread = _create_thread()
-    return jsonify({"thread": {"id": thread.id, "title": thread.title}}), 201
+    return (
+        jsonify(
+            {
+                "thread": {
+                    "id": thread.id,
+                    "title": thread.title,
+                    "model_name": thread.model_name,
+                    "reasoning_effort": thread.reasoning_effort,
+                }
+            }
+        ),
+        201,
+    )
 
 
 @bp.post("/api/chat/threads/<thread_id>/messages")
@@ -59,6 +83,20 @@ def send_message(thread_id: str):
     prompt = (payload.get("message") or "").strip()
     if not prompt:
         return jsonify({"error": "Message is required."}), 400
+
+    generation_patch = {
+        key: payload[key] for key in ("model_name", "reasoning_effort") if key in payload
+    }
+    try:
+        generation_settings = validate_settings_update(
+            _thread_generation_settings(thread, current_user.settings.merged()),
+            generation_patch,
+        )
+    except ValueError as exc:
+        return jsonify({"errors": exc.args[0]}), 400
+
+    thread.model_name = generation_settings["model_name"]
+    thread.reasoning_effort = generation_settings["reasoning_effort"]
 
     user_id = current_user.id
     persisted_thread_id = thread.id
@@ -81,6 +119,8 @@ def send_message(thread_id: str):
             request_received_at=request_received_at,
             message_persisted_at=utcnow(),
             completed_at=utcnow(),
+            model_name=generation_settings["model_name"],
+            reasoning_effort=generation_settings["reasoning_effort"],
         )
     )
     db.session.commit()
@@ -92,6 +132,7 @@ def send_message(thread_id: str):
                 persisted_thread_id,
                 prompt,
                 request_received_at,
+                generation_settings,
             )
         ),
         mimetype="text/event-stream",
@@ -104,6 +145,7 @@ def _generate_response(
     thread_id: str,
     prompt: str,
     request_received_at: datetime,
+    generation_settings: dict | None = None,
 ) -> Generator[str, None, None]:
     """Stream agent events and persist the completed assistant message.
 
@@ -112,6 +154,7 @@ def _generate_response(
         thread_id: Primary key of the user-owned chat thread.
         prompt: Plain-text user prompt.
         request_received_at: Timestamp captured when the request began.
+        generation_settings: Validated settings selected for this response.
 
     Yields:
         Server-sent event strings for agent progress and completion.
@@ -121,13 +164,23 @@ def _generate_response(
     generation_started_at = utcnow()
     first_token_at = None
     token_count = 0
+    tool_call_records: list[dict] = []
     try:
         user = db.session.get(User, user_id)
         thread = db.session.get(ChatThread, thread_id)
         if user is None or thread is None or thread.user_id != user_id:
             raise RuntimeError("The chat context is no longer available.")
 
-        for event in stream_agent_response(user, thread, prompt):
+        effective_settings = generation_settings or _thread_generation_settings(
+            thread, user.settings.merged()
+        )
+        for event in stream_agent_response(
+            user,
+            thread,
+            prompt,
+            settings=effective_settings,
+            tool_call_records=tool_call_records,
+        ):
             if event["type"] == "token":
                 token_count += 1
                 if first_token_at is None:
@@ -159,8 +212,19 @@ def _generate_response(
                 first_token_at=first_token_at,
                 completed_at=utcnow(),
                 token_count=token_count,
+                model_name=effective_settings["model_name"],
+                reasoning_effort=effective_settings["reasoning_effort"],
             )
         )
+        for record in tool_call_records:
+            db.session.add(
+                ToolCallTelemetry(
+                    message_id=assistant_message_id,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    **record,
+                )
+            )
         db.session.commit()
         yield _sse(
             "done",
@@ -196,10 +260,38 @@ def _create_thread() -> ChatThread:
     Returns:
         The newly persisted thread.
     """
-    thread = ChatThread(user_id=current_user.id)
+    defaults = current_user.settings.merged()
+    thread = ChatThread(
+        user_id=current_user.id,
+        model_name=defaults["model_name"],
+        reasoning_effort=defaults["reasoning_effort"],
+    )
     db.session.add(thread)
     db.session.commit()
     return thread
+
+
+def _thread_generation_settings(thread: ChatThread, user_settings: dict) -> dict:
+    """Merge a thread's generation choices over the user's account defaults."""
+    settings = dict(user_settings)
+    if thread.model_name:
+        settings["model_name"] = thread.model_name
+    if thread.reasoning_effort:
+        settings["reasoning_effort"] = thread.reasoning_effort
+    return settings
+
+
+def _render_chat(selected: ChatThread, threads: list[ChatThread]):
+    """Render the chat workspace with the selected thread's generation controls."""
+    chat_settings = _thread_generation_settings(selected, current_user.settings.merged())
+    return render_template(
+        "chat.html",
+        threads=threads,
+        selected_thread=selected,
+        chat_settings=chat_settings,
+        model_options=MODEL_OPTIONS,
+        reasoning_options=REASONING_OPTIONS,
+    )
 
 
 def _get_thread_or_404(thread_id: str) -> ChatThread:

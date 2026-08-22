@@ -14,6 +14,8 @@ const form = document.querySelector("#chat-form");
 if (form) {
   const input = document.querySelector("#message-input");
   const submitButton = form.querySelector("button[type='submit']");
+  const modelSelect = document.querySelector("#model-select");
+  const reasoningSelect = document.querySelector("#reasoning-select");
 
   function resizeComposer() {
     input.style.height = "auto";
@@ -23,8 +25,11 @@ if (form) {
   function setStreaming(isStreaming) {
     input.disabled = isStreaming;
     submitButton.disabled = isStreaming;
+    modelSelect.disabled = isStreaming;
+    reasoningSelect.disabled = isStreaming;
     submitButton.textContent = isStreaming ? "Sending" : "Send";
     form.classList.toggle("is-streaming", isStreaming);
+    form.setAttribute("aria-busy", String(isStreaming));
   }
 
   input.addEventListener("input", resizeComposer);
@@ -58,7 +63,11 @@ if (form) {
       const response = await fetch(`/api/chat/threads/${pane.dataset.threadId}/messages`, {
         method: "POST",
         headers: jsonHeaders(),
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({
+          message,
+          model_name: modelSelect.value,
+          reasoning_effort: reasoningSelect.value,
+        }),
       });
       if (!response.ok) {
         status.textContent = "Message failed to send.";

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -30,6 +31,7 @@ class ToolCallLoggingCallback(BaseCallbackHandler):
         user_id: int | None,
         thread_id: str,
         log_arguments: bool = False,
+        record_sink: list[dict[str, Any]] | None = None,
     ) -> None:
         """Initialize request-scoped tool-call logging.
 
@@ -38,12 +40,15 @@ class ToolCallLoggingCallback(BaseCallbackHandler):
             user_id: Authenticated user identifier, when available.
             thread_id: Chat thread associated with the agent run.
             log_arguments: Whether to log sanitized tool argument values.
+            record_sink: Optional list populated with database-ready records.
         """
         self._logger = logger
         self._user_id = user_id
         self._thread_id = thread_id
         self._log_arguments = log_arguments
         self._started_at: dict[UUID, float] = {}
+        self._records_by_run_id: dict[UUID, dict[str, Any]] = {}
+        self.records = [] if record_sink is None else record_sink
 
     def on_tool_start(
         self,
@@ -79,6 +84,22 @@ class ToolCallLoggingCallback(BaseCallbackHandler):
             input_str,
             include_values=self._log_arguments,
         )
+        record = {
+            "run_id": str(run_id),
+            "parent_run_id": str(parent_run_id) if parent_run_id else None,
+            "tool_name": tool_name,
+            "source": source,
+            "input_summary": input_summary,
+            "status": "running",
+            "duration_ms": None,
+            "output_type": None,
+            "output_chars": None,
+            "error_type": None,
+            "started_at": datetime.now(UTC),
+            "completed_at": None,
+        }
+        self.records.append(record)
+        self._records_by_run_id[run_id] = record
         self._logger.info(
             "event=tool.call.start user_id=%s thread_id=%s run_id=%s "
             "parent_run_id=%s tool=%s source=%s input=%s",
@@ -108,6 +129,16 @@ class ToolCallLoggingCallback(BaseCallbackHandler):
             **kwargs: Additional callback values supplied by LangChain.
         """
         del kwargs
+        duration_ms = self._duration_ms(run_id)
+        record = self._records_by_run_id.pop(run_id, None)
+        if record is not None:
+            record.update(
+                status="succeeded",
+                duration_ms=duration_ms,
+                output_type=type(output).__name__,
+                output_chars=len(str(output)),
+                completed_at=datetime.now(UTC),
+            )
         self._logger.info(
             "event=tool.call.end user_id=%s thread_id=%s run_id=%s "
             "parent_run_id=%s duration_ms=%s output_type=%s output_chars=%s",
@@ -115,7 +146,7 @@ class ToolCallLoggingCallback(BaseCallbackHandler):
             self._thread_id,
             run_id,
             parent_run_id,
-            self._duration_ms(run_id),
+            duration_ms,
             type(output).__name__,
             len(str(output)),
         )
@@ -137,6 +168,15 @@ class ToolCallLoggingCallback(BaseCallbackHandler):
             **kwargs: Additional callback values supplied by LangChain.
         """
         del kwargs
+        duration_ms = self._duration_ms(run_id)
+        record = self._records_by_run_id.pop(run_id, None)
+        if record is not None:
+            record.update(
+                status="failed",
+                duration_ms=duration_ms,
+                error_type=type(error).__name__,
+                completed_at=datetime.now(UTC),
+            )
         self._logger.error(
             "event=tool.call.error user_id=%s thread_id=%s run_id=%s "
             "parent_run_id=%s duration_ms=%s error_type=%s",
@@ -144,7 +184,7 @@ class ToolCallLoggingCallback(BaseCallbackHandler):
             self._thread_id,
             run_id,
             parent_run_id,
-            self._duration_ms(run_id),
+            duration_ms,
             type(error).__name__,
         )
         self._logger.debug("Tool call exception", exc_info=error)
