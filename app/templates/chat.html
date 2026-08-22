@@ -47,6 +47,14 @@
   </div>
   <div id="stream-status" class="stream-status" aria-live="polite"></div>
   <form id="chat-form" class="composer">
+    <label class="composer-setting" for="reasoning-provider-select">
+      <span>Reasoning provider</span>
+      <select id="reasoning-provider-select" name="reasoning_provider">
+        {% for value, label in reasoning_provider_options %}
+          <option value="{{ value }}" {% if reasoning_provider == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <div class="relative min-w-0">
       <textarea id="message-input" name="message" rows="2" placeholder="Ask anything..." required></textarea>
       <span class="pointer-events-none absolute bottom-3 right-3 hidden rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 sm:inline">Ctrl Enter</span>

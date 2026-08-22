@@ -21,6 +21,13 @@
         {% endfor %}
       </select>
     </label>
+    <label>Reasoning provider
+      <select name="reasoning_provider">
+        {% for value, label in reasoning_provider_options %}
+          <option value="{{ value }}" {% if settings.reasoning_provider == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>Theme
       <select name="theme">
         {% for theme in ["system", "light", "dark"] %}

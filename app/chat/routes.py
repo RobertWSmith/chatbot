@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 
-from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context
+from flask import (
+    Blueprint,
+    Response,
+    jsonify,
+    render_template,
+    request,
+    stream_with_context,
+)
 from flask_login import current_user, login_required
 
 from app.extensions import db
 from app.models import ChatMessage, ChatThread, MessageTelemetry, utcnow
 from app.services.agent import stream_agent_response
+from app.validation import REASONING_PROVIDER_OPTIONS, validate_settings_update
 
 bp = Blueprint("chat", __name__)
 
@@ -17,21 +25,32 @@ bp = Blueprint("chat", __name__)
 def chat_home():
     threads = _user_threads()
     selected = threads[0] if threads else _create_thread()
-    return render_template("chat.html", threads=threads, selected_thread=selected)
+    return _render_chat(selected, threads)
 
 
 @bp.get("/chat/<thread_id>")
 @login_required
 def chat_thread(thread_id: str):
     selected = _get_thread_or_404(thread_id)
-    return render_template("chat.html", threads=_user_threads(), selected_thread=selected)
+    return _render_chat(selected, _user_threads())
 
 
 @bp.post("/api/chat/threads")
 @login_required
 def create_thread():
     thread = _create_thread()
-    return jsonify({"thread": {"id": thread.id, "title": thread.title}}), 201
+    return (
+        jsonify(
+            {
+                "thread": {
+                    "id": thread.id,
+                    "title": thread.title,
+                    "reasoning_provider": thread.reasoning_provider,
+                }
+            }
+        ),
+        201,
+    )
 
 
 @bp.post("/api/chat/threads/<thread_id>/messages")
@@ -44,11 +63,27 @@ def send_message(thread_id: str):
     if not prompt:
         return jsonify({"error": "Message is required."}), 400
 
+    account_settings = current_user.settings.merged()
+    reasoning_provider = (
+        thread.reasoning_provider or account_settings["reasoning_provider"]
+    )
+    if "reasoning_provider" in payload:
+        try:
+            validated = validate_settings_update(
+                account_settings,
+                {"reasoning_provider": payload["reasoning_provider"]},
+            )
+        except ValueError as exc:
+            return jsonify({"errors": exc.args[0]}), 400
+        reasoning_provider = validated["reasoning_provider"]
+    thread.reasoning_provider = reasoning_provider
+
     user_message = ChatMessage(
         thread_id=thread.id,
         user_id=current_user.id,
         role="user",
         content=prompt,
+        message_metadata={"reasoning_provider": reasoning_provider},
     )
     db.session.add(user_message)
     if thread.title == "New chat":
@@ -90,6 +125,7 @@ def send_message(thread_id: str):
                 role="assistant",
                 content="".join(assistant_text).strip(),
                 reasoning_summary="".join(reasoning_text).strip() or None,
+                message_metadata={"reasoning_provider": reasoning_provider},
             )
             db.session.add(assistant_message)
             db.session.flush()
@@ -116,7 +152,7 @@ def send_message(thread_id: str):
                     "thread_id": thread.id,
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - convert stream failures to SSE errors
             db.session.rollback()
             yield _sse("error", {"type": "error", "message": str(exc)})
 
@@ -136,14 +172,33 @@ def _user_threads():
 
 
 def _create_thread() -> ChatThread:
-    thread = ChatThread(user_id=current_user.id)
+    thread = ChatThread(
+        user_id=current_user.id,
+        reasoning_provider=current_user.settings.merged()["reasoning_provider"],
+    )
     db.session.add(thread)
     db.session.commit()
     return thread
 
 
+def _render_chat(selected: ChatThread, threads: list[ChatThread]):
+    reasoning_provider = (
+        selected.reasoning_provider
+        or current_user.settings.merged()["reasoning_provider"]
+    )
+    return render_template(
+        "chat.html",
+        threads=threads,
+        selected_thread=selected,
+        reasoning_provider=reasoning_provider,
+        reasoning_provider_options=REASONING_PROVIDER_OPTIONS,
+    )
+
+
 def _get_thread_or_404(thread_id: str) -> ChatThread:
-    return ChatThread.query.filter_by(id=thread_id, user_id=current_user.id).first_or_404()
+    return ChatThread.query.filter_by(
+        id=thread_id, user_id=current_user.id
+    ).first_or_404()
 
 
 def _sse(event: str, data: dict) -> str:

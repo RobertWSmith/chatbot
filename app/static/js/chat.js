@@ -82,6 +82,7 @@ const form = document.querySelector("#chat-form");
 if (form) {
   const input = document.querySelector("#message-input");
   const submitButton = form.querySelector("button[type='submit']");
+  const reasoningProviderSelect = document.querySelector("#reasoning-provider-select");
 
   function resizeComposer() {
     input.style.height = "auto";
@@ -91,6 +92,7 @@ if (form) {
   function setStreaming(isStreaming) {
     input.disabled = isStreaming;
     submitButton.disabled = isStreaming;
+    reasoningProviderSelect.disabled = isStreaming;
     submitButton.textContent = isStreaming ? "Sending" : "Send";
     form.classList.toggle("is-streaming", isStreaming);
   }
@@ -125,7 +127,10 @@ if (form) {
       const response = await fetch(`/api/chat/threads/${pane.dataset.threadId}/messages`, {
         method: "POST",
         headers: window.chatApp.jsonHeaders(),
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({
+          message,
+          reasoning_provider: reasoningProviderSelect.value,
+        }),
       });
       if (!response.ok) {
         status.textContent = "Message failed to send.";

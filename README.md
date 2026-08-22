@@ -48,7 +48,15 @@ The Docker Compose database uses `pgvector/pgvector:0.8.2-pg17`, and migrations 
 
 ## Reasoning
 
-The app surfaces reasoning summaries when the configured model/provider supports them. It does not expose raw hidden reasoning.
+Each account has a default reasoning provider, and each chat can override it from the
+composer. `OpenAI` uses provider-native reasoning through the standard tool-capable agent.
+`LangGraph` uses the app-owned workflow and treats reasoning effort as graph depth, from a
+direct answer at `minimal` through planning, drafting, critique, and finalization at the
+higher levels. The selection is persisted with the chat rather than configured when the
+process launches.
+
+The app surfaces user-safe reasoning summaries when the selected workflow supports them.
+It does not expose raw hidden reasoning.
 
 ## Tool concurrency
 

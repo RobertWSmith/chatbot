@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 
 from app.extensions import db
-from app.validation import validate_settings_update
+from app.validation import REASONING_PROVIDER_OPTIONS, validate_settings_update
 
 bp = Blueprint("settings", __name__)
 
@@ -12,7 +12,11 @@ bp = Blueprint("settings", __name__)
 @bp.get("/settings")
 @login_required
 def settings_page():
-    return render_template("settings.html", settings=current_user.settings.merged())
+    return render_template(
+        "settings.html",
+        settings=current_user.settings.merged(),
+        reasoning_provider_options=REASONING_PROVIDER_OPTIONS,
+    )
 
 
 @bp.patch("/api/settings")

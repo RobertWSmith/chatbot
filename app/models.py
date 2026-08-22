@@ -20,6 +20,7 @@ def default_settings() -> dict:
     return {
         "model_name": current_app.config.get("DEFAULT_MODEL", "gpt-5.5"),
         "reasoning_effort": current_app.config.get("DEFAULT_REASONING_EFFORT", "medium"),
+        "reasoning_provider": "openai",
         "reasoning_summaries_enabled": True,
         "memory_enabled": True,
         "markdown_options": {
@@ -133,6 +134,7 @@ class ChatThread(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = db.Column(db.String(180), nullable=False, default="New chat")
+    reasoning_provider = db.Column(db.String(32), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

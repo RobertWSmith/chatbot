@@ -12,6 +12,8 @@ ALLOWED_MODELS = {
     "gpt-5-nano",
 }
 ALLOWED_REASONING = {"minimal", "low", "medium", "high", "xhigh"}
+REASONING_PROVIDER_OPTIONS = (("openai", "OpenAI"), ("langgraph", "LangGraph"))
+ALLOWED_REASONING_PROVIDERS = {value for value, _label in REASONING_PROVIDER_OPTIONS}
 ALLOWED_THEMES = {"system", "light", "dark"}
 ALLOWED_FONT_SIZES = {"small", "medium", "large"}
 ALLOWED_SPEEDS = {"slow", "normal", "fast"}
@@ -25,6 +27,7 @@ def validate_settings_update(current: dict, patch: dict) -> dict:
     scalar_rules = {
         "model_name": ALLOWED_MODELS,
         "reasoning_effort": ALLOWED_REASONING,
+        "reasoning_provider": ALLOWED_REASONING_PROVIDERS,
         "theme": ALLOWED_THEMES,
         "font_size": ALLOWED_FONT_SIZES,
         "streaming_speed": ALLOWED_SPEEDS,

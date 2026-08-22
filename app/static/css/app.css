@@ -212,12 +212,24 @@ a {
 
 .composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) auto;
   gap: 12px;
   align-items: end;
   padding: 16px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-muted) 70%, var(--surface));
+}
+
+.composer-setting {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.composer-setting select {
+  min-height: 58px;
 }
 
 textarea,
