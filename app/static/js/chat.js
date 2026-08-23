@@ -159,7 +159,6 @@ if (form) {
         } else if (eventName === "done") {
           status.textContent = "Done";
         }
-        assistant.article.scrollIntoView({ block: "end" });
       });
     } catch {
       status.textContent = "Message failed to send.";

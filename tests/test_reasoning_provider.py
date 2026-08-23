@@ -112,6 +112,34 @@ def test_agent_routes_each_reasoning_provider(client, app, monkeypatch):
     assert calls == [("openai", "openai"), ("langgraph", "langgraph")]
 
 
+def test_parallel_tool_calls_is_only_set_for_tool_enabled_agent(app, monkeypatch):
+    captured_kwargs = []
+
+    class FakeOpenAIModel:
+        def __init__(self, **kwargs):
+            captured_kwargs.append(kwargs)
+
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeOpenAIModel)
+    settings = {
+        "model_name": "gpt-5.4",
+        "reasoning_effort": "medium",
+        "reasoning_summaries_enabled": True,
+    }
+
+    with app.app_context():
+        agent_service._build_chat_model(settings, provider_reasoning=False)
+        agent_service._build_chat_model(settings, provider_reasoning=True)
+
+    custom_graph_kwargs, tool_agent_kwargs = captured_kwargs
+    assert "model_kwargs" not in custom_graph_kwargs
+    assert "reasoning" not in custom_graph_kwargs
+    assert tool_agent_kwargs["model_kwargs"] == {"parallel_tool_calls": True}
+    assert tool_agent_kwargs["reasoning"] == {
+        "effort": "medium",
+        "summary": "auto",
+    }
+
+
 def test_langgraph_provider_streams_plan_and_answer(client, app, monkeypatch):
     app.config["OPENAI_API_KEY"] = "test-key"
     register(client)

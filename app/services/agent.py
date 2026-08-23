@@ -144,9 +144,12 @@ def _build_chat_model(settings: dict, *, provider_reasoning: bool):
     kwargs: dict[str, Any] = {
         "model": settings["model_name"],
         "api_key": current_app.config.get("OPENAI_API_KEY") or None,
-        "model_kwargs": {"parallel_tool_calls": True},
     }
     if provider_reasoning:
+        # The provider-reasoning path is wrapped by create_agent with tools. The
+        # custom LangGraph path invokes this model directly, so sending this option
+        # there produces an OpenAI 400 because those requests contain no tools.
+        kwargs["model_kwargs"] = {"parallel_tool_calls": True}
         kwargs["reasoning"] = {
             "effort": settings["reasoning_effort"],
             "summary": "auto" if settings.get("reasoning_summaries_enabled") else None,
