@@ -75,6 +75,73 @@
               {% endfor %}
             </select>
           </label>
+          {% set selected_mcp_namespaces = chat_settings.mcp_namespaces %}
+          {% set selected_mcp_count = mcp_namespaces | length if selected_mcp_namespaces is none else selected_mcp_namespaces | length %}
+          <div class="tool-filter" id="tool-filter">
+            <button
+              class="generation-control tool-filter-trigger"
+              id="tool-filter-trigger"
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="tool-filter-popover"
+              {% if not mcp_namespaces %}disabled{% endif %}
+            >
+              <span>Tools</span>
+              <strong data-tool-summary>
+                {% if not mcp_namespaces %}None{% elif selected_mcp_namespaces is none %}All{% elif selected_mcp_count == 0 %}Off{% else %}{{ selected_mcp_count }} selected{% endif %}
+              </strong>
+            </button>
+            <div
+              class="tool-filter-popover"
+              id="tool-filter-popover"
+              role="dialog"
+              aria-labelledby="tool-filter-title"
+              hidden
+            >
+              <div class="tool-filter-heading">
+                <div>
+                  <strong id="tool-filter-title">External tools</strong>
+                  <small>Choose the MCP namespaces available to this chat.</small>
+                </div>
+                <button class="tool-filter-close" type="button" aria-label="Close tool filter">&times;</button>
+              </div>
+              {% if mcp_namespaces %}
+                <label class="tool-filter-search">
+                  <span class="sr-only">Search tool namespaces</span>
+                  <input type="search" placeholder="Search namespaces..." autocomplete="off" data-tool-search>
+                </label>
+                <div class="tool-filter-actions">
+                  <button type="button" data-tool-select-all>Use all</button>
+                  <button type="button" data-tool-clear>Clear</button>
+                  <span data-tool-count aria-live="polite"></span>
+                </div>
+                <div class="tool-filter-options" data-tool-options>
+                  {% for item in mcp_namespaces %}
+                    <label
+                      class="tool-filter-option"
+                      data-tool-option
+                      data-search-value="{{ (item.display_name ~ ' ' ~ item.namespace ~ ' ' ~ item.description) | lower }}"
+                    >
+                      <input
+                        type="checkbox"
+                        value="{{ item.namespace }}"
+                        {% if selected_mcp_namespaces is none or item.namespace in selected_mcp_namespaces %}checked{% endif %}
+                      >
+                      <span>
+                        <strong>{{ item.display_name }}</strong>
+                        <code>mcp_{{ item.namespace }}</code>
+                        {% if item.description %}<small>{{ item.description }}</small>{% endif %}
+                      </span>
+                    </label>
+                  {% endfor %}
+                  <p class="tool-filter-empty" data-tool-empty hidden>No namespaces match that search.</p>
+                </div>
+              {% else %}
+                <p class="tool-filter-empty">No external tool namespaces are granted to this account.</p>
+              {% endif %}
+            </div>
+          </div>
         </div>
         <div class="composer-actions">
           <span class="composer-shortcut">Ctrl Enter</span>

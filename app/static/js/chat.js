@@ -7,6 +7,7 @@ import {
   renderMarkdown,
 } from "./chat-rendering.js";
 import { readSse } from "./chat-stream.js";
+import { initializeToolFilter } from "./chat-tools.js";
 
 renderExistingMarkdown();
 
@@ -17,6 +18,7 @@ if (form) {
   const modelSelect = document.querySelector("#model-select");
   const reasoningSelect = document.querySelector("#reasoning-select");
   const reasoningProviderSelect = document.querySelector("#reasoning-provider-select");
+  const toolFilter = initializeToolFilter(document.querySelector("#tool-filter"));
 
   function resizeComposer() {
     input.style.height = "auto";
@@ -29,6 +31,7 @@ if (form) {
     modelSelect.disabled = isStreaming;
     reasoningSelect.disabled = isStreaming;
     reasoningProviderSelect.disabled = isStreaming;
+    toolFilter?.setDisabled(isStreaming);
     submitButton.textContent = isStreaming ? "Sending" : "Send";
     form.classList.toggle("is-streaming", isStreaming);
     form.setAttribute("aria-busy", String(isStreaming));
@@ -70,6 +73,7 @@ if (form) {
           model_name: modelSelect.value,
           reasoning_effort: reasoningSelect.value,
           reasoning_provider: reasoningProviderSelect.value,
+          mcp_namespaces: toolFilter ? toolFilter.value() : [],
         }),
       });
       if (!response.ok) {

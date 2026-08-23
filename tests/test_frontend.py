@@ -1,3 +1,5 @@
+import re
+
 from .conftest import register
 
 
@@ -25,6 +27,7 @@ def test_browser_module_dependencies_are_served(client):
         "app.js",
         "chat-rendering.js",
         "chat-stream.js",
+        "chat-tools.js",
     )
 
     for asset in assets:
@@ -40,6 +43,16 @@ def test_markdown_links_open_in_new_tabs(client):
     assert response.status_code == 200
     assert b'link.setAttribute("target", "_blank")' in response.data
     assert b'link.setAttribute("rel", "noopener noreferrer")' in response.data
+
+
+def test_tool_filter_can_escape_the_composer_surface(client):
+    """Ensure the upward-opening tool filter is not clipped by its composer ancestor."""
+    response = client.get("/static/css/app.css")
+
+    assert response.status_code == 200
+    composer_surface = re.search(rb"\.composer-surface\s*\{([^}]*)\}", response.data)
+    assert composer_surface is not None
+    assert b"overflow: visible" in composer_surface.group(1)
 
 
 def test_settings_page_exposes_gpt_5_6_options(client):

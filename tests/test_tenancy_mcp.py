@@ -396,6 +396,36 @@ def test_mcp_loader_isolates_namespace_failures_and_marks_tools(app, monkeypatch
     assert result.tools[0].description.startswith("[MCP namespace: alpha]")
 
 
+def test_mcp_loader_connects_only_to_the_selected_authorized_namespaces(app, monkeypatch):
+    """Ensure a namespace filter prevents connections to unselected MCP servers."""
+    with app.app_context():
+        user = _user("filtered-tools@example.com")
+        group = Group(name="Filtered", slug="filtered", created_by_user_id=user.id)
+        group.memberships.append(GroupMembership(user=user, role="owner"))
+        group.namespace_grants.extend(
+            [
+                GroupMCPNamespace(mcp_namespace=_namespace("alpha")),
+                GroupMCPNamespace(mcp_namespace=_namespace("beta")),
+            ]
+        )
+        db.session.add(group)
+        db.session.commit()
+        connected = []
+
+        async def fake_load(item):
+            """Record selected connections and return no tools."""
+            connected.append(item.namespace)
+            return []
+
+        monkeypatch.setattr(mcp_access, "_load_namespace_tools", fake_load)
+        selected = asyncio.run(mcp_access.load_authorized_mcp_tools(user.id, ["beta"]))
+        disabled = asyncio.run(mcp_access.load_authorized_mcp_tools(user.id, []))
+
+    assert connected == ["beta"]
+    assert selected.loaded_namespaces == ("beta",)
+    assert disabled == mcp_access.MCPToolLoadResult([], (), ())
+
+
 def test_mcp_connection_reads_bearer_token_from_environment(monkeypatch):
     """Ensure MCP bearer tokens are resolved from the configured environment variable."""
     item = SimpleNamespace(

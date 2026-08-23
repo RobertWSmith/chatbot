@@ -2,7 +2,17 @@ from uuid import uuid4
 
 import app.chat.routes as chat_routes
 from app.extensions import db
-from app.models import ChatMessage, ChatThread, ToolCallTelemetry, User, utcnow
+from app.models import (
+    ChatMessage,
+    ChatThread,
+    Group,
+    GroupMCPNamespace,
+    GroupMembership,
+    MCPNamespace,
+    ToolCallTelemetry,
+    User,
+    utcnow,
+)
 
 from .conftest import register
 
@@ -116,3 +126,108 @@ def test_invalid_chat_generation_choice_is_rejected_before_persistence(client, a
     assert "model_name" in response.get_json()["errors"]
     with app.app_context():
         assert ChatMessage.query.filter_by(thread_id=thread_id).count() == 0
+
+
+def test_chat_namespace_filter_is_searchable_thread_scoped_and_audited(client, app, monkeypatch):
+    """Ensure an authorized namespace subset renders, persists, and reaches one turn."""
+    register(client)
+    with app.app_context():
+        user = User.query.one()
+        _grant_mcp_namespaces(user, "alpha", "billing")
+        db.session.commit()
+    thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+    captured = {}
+
+    def fake_stream(user, thread, prompt, *, settings, tool_call_records):
+        """Capture the selected namespace filter and return a short response."""
+        captured["mcp_namespaces"] = settings["mcp_namespaces"]
+        yield {"type": "token", "text": "Filtered."}
+
+    monkeypatch.setattr(chat_routes, "stream_agent_response", fake_stream)
+    page = client.get(f"/chat/{thread_id}")
+    response = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        json={"message": "Use billing", "mcp_namespaces": ["billing", "Billing"]},
+    )
+
+    assert page.status_code == 200
+    assert b'id="tool-filter-trigger"' in page.data
+    assert b'placeholder="Search namespaces..."' in page.data
+    assert b'value="alpha"' in page.data
+    assert b'value="billing"' in page.data
+    assert response.status_code == 200
+    assert b"event: done" in response.data
+    assert captured["mcp_namespaces"] == ["billing"]
+
+    with app.app_context():
+        thread = db.session.get(ChatThread, thread_id)
+        messages = ChatMessage.query.filter_by(thread_id=thread_id).order_by(ChatMessage.id).all()
+        assert thread.mcp_namespace_filter == ["billing"]
+        assert [message.message_metadata["mcp_namespaces"] for message in messages] == [
+            ["billing"],
+            ["billing"],
+        ]
+        assert [message.telemetry.telemetry_metadata["mcp_namespaces"] for message in messages] == [
+            ["billing"],
+            ["billing"],
+        ]
+
+
+def test_chat_namespace_filter_supports_all_off_and_rejects_unavailable_namespaces(
+    client,
+    app,
+    monkeypatch,
+):
+    """Ensure namespace filtering distinguishes all, none, and unauthorized input."""
+    register(client)
+    with app.app_context():
+        user = User.query.one()
+        _grant_mcp_namespaces(user, "portal")
+        db.session.commit()
+    thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+    captured = []
+
+    def fake_stream(user, thread, prompt, *, settings, tool_call_records):
+        """Record each effective filter while emulating successful responses."""
+        captured.append(settings["mcp_namespaces"])
+        yield {"type": "token", "text": "Done."}
+
+    monkeypatch.setattr(chat_routes, "stream_agent_response", fake_stream)
+    all_response = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        json={"message": "All", "mcp_namespaces": None},
+    )
+    assert b"event: done" in all_response.data
+    off_response = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        json={"message": "Off", "mcp_namespaces": []},
+    )
+    assert b"event: done" in off_response.data
+    invalid_response = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        json={"message": "Escalate", "mcp_namespaces": ["admin"]},
+    )
+
+    assert all_response.status_code == 200
+    assert off_response.status_code == 200
+    assert invalid_response.status_code == 400
+    assert "mcp_namespaces" in invalid_response.get_json()["errors"]
+    assert captured == [None, []]
+    with app.app_context():
+        assert db.session.get(ChatThread, thread_id).mcp_namespace_filter == []
+        assert ChatMessage.query.filter_by(thread_id=thread_id).count() == 4
+
+
+def _grant_mcp_namespaces(user: User, *namespaces: str) -> None:
+    """Grant a test user's owner group access to named MCP namespaces."""
+    group = Group(name="Tool access", slug=f"tools-{user.id}", created_by_user_id=user.id)
+    group.memberships.append(GroupMembership(user=user, role="owner"))
+    for namespace in namespaces:
+        item = MCPNamespace(
+            namespace=namespace,
+            display_name=namespace.title(),
+            description=f"{namespace.title()} tools",
+            url=f"https://{namespace}.example.com/mcp",
+        )
+        group.namespace_grants.append(GroupMCPNamespace(mcp_namespace=item))
+    db.session.add(group)

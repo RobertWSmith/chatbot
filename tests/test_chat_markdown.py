@@ -20,3 +20,12 @@ def test_system_prompt_requests_supported_math_delimiters():
 
     assert "inline math as `$...$`" in prompt
     assert r"display math as `\[...\]`" in prompt
+
+
+def test_markdown_allows_sanitized_html_for_table_cell_line_breaks(client):
+    """Ensure safe inline HTML such as table-cell breaks is rendered, not printed."""
+    response = client.get("/static/js/chat-rendering.js")
+
+    assert response.status_code == 200
+    assert b"html: true" in response.data
+    assert b"window.DOMPurify.sanitize(dirty)" in response.data

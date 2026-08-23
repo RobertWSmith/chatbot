@@ -274,7 +274,7 @@ a {
 }
 
 .composer-surface {
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--surface);
@@ -338,6 +338,161 @@ a {
 
 .generation-control select:focus {
   box-shadow: none;
+}
+
+.tool-filter {
+  position: relative;
+}
+
+.tool-filter-trigger {
+  min-height: 34px;
+  padding: 0 10px;
+  border-color: var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tool-filter-trigger strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tool-filter-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.tool-filter-popover {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 9px);
+  left: 0;
+  display: grid;
+  width: min(390px, calc(100vw - 32px));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+}
+
+.tool-filter-popover[hidden],
+.tool-filter-option[hidden],
+.tool-filter-empty[hidden] {
+  display: none;
+}
+
+.tool-filter-heading,
+.tool-filter-actions {
+  display: flex;
+  align-items: center;
+}
+
+.tool-filter-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tool-filter-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.tool-filter-heading small,
+.tool-filter-option small,
+.tool-filter-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tool-filter-close,
+.tool-filter-actions button {
+  min-height: 30px;
+  padding: 0 9px;
+  border-color: var(--border);
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tool-filter-close {
+  width: 30px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.tool-filter-search input {
+  min-height: 38px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.tool-filter-actions {
+  gap: 7px;
+}
+
+.tool-filter-actions span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tool-filter-options {
+  display: grid;
+  max-height: 280px;
+  gap: 5px;
+  overflow-y: auto;
+}
+
+.tool-filter-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.tool-filter-option:hover {
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+
+.tool-filter-option input {
+  width: 16px;
+  min-height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+.tool-filter-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.tool-filter-option code {
+  width: fit-content;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.tool-filter-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-filter-empty {
+  margin: 0;
+  padding: 10px;
+  text-align: center;
 }
 
 .composer-actions {

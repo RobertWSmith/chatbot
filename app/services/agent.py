@@ -52,6 +52,7 @@ def stream_agent_response(
         value = getattr(thread, key, None)
         if value:
             settings[key] = value
+    settings.setdefault("mcp_namespaces", getattr(thread, "mcp_namespace_filter", None))
     tool_call_records = [] if tool_call_records is None else tool_call_records
     messages = _conversation_messages(user, thread, prompt)
     if not current_app.config.get("OPENAI_API_KEY"):
@@ -65,7 +66,10 @@ def stream_agent_response(
         return
 
     try:
-        authorized_namespaces = accessible_mcp_namespaces(user.id)
+        authorized_namespaces = accessible_mcp_namespaces(
+            user.id,
+            settings.get("mcp_namespaces"),
+        )
         reasoning_provider = settings.get("reasoning_provider", "openai")
         use_custom_graph = reasoning_provider == "langgraph"
         tool_capable = bool(authorized_namespaces) if use_custom_graph else True
@@ -145,7 +149,7 @@ async def _astream_langgraph_response(
     model = _build_chat_model(settings, provider_reasoning=True)
     user_id = getattr(user, "id", None)
     mcp_result = (
-        await load_authorized_mcp_tools(user_id)
+        await load_authorized_mcp_tools(user_id, settings.get("mcp_namespaces"))
         if user_id is not None
         else MCPToolLoadResult([], (), ())
     )
@@ -332,7 +336,7 @@ async def _astream_custom_reasoning_graph_response(
     model = _build_chat_model(settings, provider_reasoning=False)
     user_id = getattr(user, "id", None)
     mcp_result = (
-        await load_authorized_mcp_tools(user_id)
+        await load_authorized_mcp_tools(user_id, settings.get("mcp_namespaces"))
         if user_id is not None
         else MCPToolLoadResult([], (), ())
     )

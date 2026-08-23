@@ -271,7 +271,7 @@ def test_mcp_enabled_custom_graph_scopes_read_tools_and_bounds_research(client, 
     monkeypatch.setattr(
         agent_service,
         "accessible_mcp_namespaces",
-        lambda user_id: [SimpleNamespace(namespace="portalv2")],
+        lambda user_id, namespace_filter=None: [SimpleNamespace(namespace="portalv2")],
     )
     monkeypatch.setattr(
         agent_service,
@@ -292,7 +292,11 @@ def test_mcp_enabled_custom_graph_scopes_read_tools_and_bounds_research(client, 
             **user.settings.merged(),
             "reasoning_effort": "high",
         }
-        thread = ChatThread(user_id=user.id, reasoning_provider="langgraph")
+        thread = ChatThread(
+            user_id=user.id,
+            reasoning_provider="langgraph",
+            mcp_namespace_filter=["portalv2"],
+        )
         db.session.add(thread)
         db.session.commit()
 
@@ -310,6 +314,7 @@ def test_mcp_enabled_custom_graph_scopes_read_tools_and_bounds_research(client, 
     assert built["tools"] == [read_tool]
     assert write_tool not in built["tools"]
     assert built["namespaces"] == ("portalv2",)
+    agent_service.load_authorized_mcp_tools.assert_awaited_with(user.id, ["portalv2"])
     assert any("External research notes:" in messages[-1]["content"] for messages in model.prompts)
     assert any(
         event == {"type": "token", "text": "Final answer from the custom graph."}
@@ -359,20 +364,24 @@ def test_prebuilt_agent_streams_reasoning_summary_text(monkeypatch, effort):
     monkeypatch.setattr("langchain.agents.create_agent", lambda **kwargs: FakePrebuiltAgent())
     monkeypatch.setattr(agent_service, "_build_chat_model", lambda settings, **kwargs: object())
     monkeypatch.setattr(agent_service, "_build_agent_tools", lambda user, thread, settings: [])
+    loader = AsyncMock(return_value=agent_service.MCPToolLoadResult([], (), ()))
+    monkeypatch.setattr(agent_service, "load_authorized_mcp_tools", loader)
 
     events = list(
         agent_service._stream_langgraph_response(
-            SimpleNamespace(),
+            SimpleNamespace(id=7),
             SimpleNamespace(id=1),
             [],
             {
                 "reasoning_effort": effort,
                 "reasoning_summaries_enabled": True,
+                "mcp_namespaces": ["portal"],
             },
         )
     )
 
     assert {"type": "reasoning_summary", "text": "Prepared the response."} in events
+    loader.assert_awaited_once_with(7, ["portal"])
 
 
 def test_prebuilt_agent_separates_indexed_reasoning_markdown_blocks(monkeypatch):
