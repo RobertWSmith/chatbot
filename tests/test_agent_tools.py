@@ -3,6 +3,7 @@ from time import sleep
 
 import pytest
 from langchain.messages import AIMessage
+from langchain_core.tools import StructuredTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -14,6 +15,7 @@ from app.services.agent import (
     _build_web_search_api,
     _run_web_search,
     _system_prompt,
+    _with_sync_invocation,
 )
 
 
@@ -179,6 +181,43 @@ def test_independent_web_resolutions_run_concurrently(app, monkeypatch):
         "https://one.example: first",
         "https://two.example: second",
     ]
+
+
+def test_async_only_mcp_tool_supports_sync_agent_invocation():
+    async def search(query: str):
+        return f"Result for {query}", {"query": query}
+
+    async_tool = StructuredTool(
+        name="mcp_search",
+        description="Search a remote MCP server.",
+        args_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        coroutine=search,
+        response_format="content_and_artifact",
+        metadata={"mcp_namespace": "test"},
+    )
+
+    sync_tool = _with_sync_invocation(async_tool)
+    messages = _run_tool_calls(
+        [sync_tool],
+        [
+            {
+                "name": "mcp_search",
+                "args": {"query": "reasoning models"},
+                "id": "call-1",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    assert async_tool.func is None
+    assert sync_tool.coroutine is async_tool.coroutine
+    assert sync_tool.metadata == {"mcp_namespace": "test"}
+    assert messages[0].content == "Result for reasoning models"
+    assert messages[0].artifact == {"query": "reasoning models"}
 
 
 def test_memory_tools_serialize_shared_database_session(app, monkeypatch):

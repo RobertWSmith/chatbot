@@ -76,9 +76,10 @@ def _stream_langgraph_response(
     for namespace in mcp_result.unavailable_namespaces:
         yield {"type": "status", "text": f"MCP namespace {namespace} is unavailable"}
     local_tools = _build_agent_tools(user, thread, settings)
+    mcp_tools = [_with_sync_invocation(tool) for tool in mcp_result.tools]
     agent = create_agent(
         model=model,
-        tools=[*local_tools, *mcp_result.tools],
+        tools=[*local_tools, *mcp_tools],
         store=None,
         system_prompt=_system_prompt(settings, mcp_result.loaded_namespaces),
     )
@@ -165,6 +166,23 @@ def _stream_custom_reasoning_graph_response(
 def _load_mcp_tools(user_id: int) -> MCPToolLoadResult:
     """Load authorized remote tools at the synchronous Flask streaming boundary."""
     return asyncio.run(load_authorized_mcp_tools(user_id))
+
+
+def _with_sync_invocation(tool: Any) -> Any:
+    """Add a sync entry point to an async-only MCP StructuredTool.
+
+    The OpenAI provider uses LangGraph's synchronous ``stream`` API, whose ToolNode
+    calls ``invoke``. MCP adapters expose only a coroutine, so bridge that coroutine
+    at this synchronous Flask boundary while retaining the tool's async entry point.
+    """
+    coroutine = getattr(tool, "coroutine", None)
+    if getattr(tool, "func", None) is not None or coroutine is None:
+        return tool
+
+    def invoke_sync(*args: Any, **kwargs: Any) -> Any:
+        return asyncio.run(coroutine(*args, **kwargs))
+
+    return tool.model_copy(update={"func": invoke_sync})
 
 
 def _mcp_search_context(tools: list[Any], query: str) -> str:
