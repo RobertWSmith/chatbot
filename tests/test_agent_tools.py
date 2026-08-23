@@ -112,6 +112,16 @@ def test_system_prompt_prefers_portal_search_when_authorized():
     assert "Prefer the MCP Portal DuckDuckGo search tool" in prompt
 
 
+def test_system_prompt_starts_with_the_users_custom_prompt():
+    custom_prompt = "You are an encouraging science tutor."
+
+    prompt = _system_prompt({"system_prompt": custom_prompt})
+
+    assert prompt.startswith(custom_prompt)
+    assert "Application capabilities and requirements:" in prompt
+    assert "Use web_search for current events" in prompt
+
+
 @pytest.mark.parametrize(
     ("configured", "expected"),
     [

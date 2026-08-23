@@ -10,7 +10,13 @@ from typing import Any, TypedDict
 from flask import current_app
 
 from app.extensions import db
-from app.models import ChatMessage, ChatThread, PendingMemory, User
+from app.models import (
+    DEFAULT_SYSTEM_PROMPT,
+    ChatMessage,
+    ChatThread,
+    PendingMemory,
+    User,
+)
 from app.services.conversation_summary import (
     snapshot_context_message,
     summarize_overflowing_conversation,
@@ -725,6 +731,7 @@ def _stream_demo_response(
 def _system_prompt(
     settings: dict[str, Any], mcp_namespaces: tuple[str, ...] = ()
 ) -> str:
+    user_prompt = settings.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
     mcp_guidance = ""
     if mcp_namespaces:
         mcp_guidance = (
@@ -733,7 +740,9 @@ def _system_prompt(
             "for current web information when the portal namespace is present. "
         )
     return (
-        "You are a helpful chatbot. Respond in clean GitHub-flavored Markdown. "
+        f"{user_prompt.strip()}\n\n"
+        "Application capabilities and requirements:\n"
+        "Respond in clean GitHub-flavored Markdown. "
         "Write inline math as `$...$` and display math as `\\[...\\]`. "
         f"{mcp_guidance}"
         "Use web_search for current events, recently changed facts, or external information "

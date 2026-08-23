@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from .models import default_settings
+from .models import DEFAULT_SYSTEM_PROMPT, default_settings
 
 MODEL_OPTIONS = (
     "gpt-5.6-sol",
@@ -22,11 +22,13 @@ ALLOWED_REASONING_PROVIDERS = {value for value, _label in REASONING_PROVIDER_OPT
 ALLOWED_THEMES = {"system", "light", "dark"}
 ALLOWED_FONT_SIZES = {"small", "medium", "large"}
 ALLOWED_SPEEDS = {"slow", "normal", "fast"}
+MAX_SYSTEM_PROMPT_LENGTH = 12_000
 
 
 def validate_settings_update(current: dict, patch: dict) -> dict:
     next_settings = deepcopy(default_settings())
     next_settings.update(current or {})
+    next_settings.setdefault("system_prompt", DEFAULT_SYSTEM_PROMPT)
     errors: dict[str, str] = {}
 
     scalar_rules = {
@@ -50,11 +52,24 @@ def validate_settings_update(current: dict, patch: dict) -> dict:
                 errors[key] = "Must be true or false."
             else:
                 next_settings[key] = value
+        elif key == "system_prompt":
+            if not isinstance(value, str):
+                errors[key] = "Must be text."
+            elif not value.strip():
+                errors[key] = "Cannot be empty."
+            elif len(value) > MAX_SYSTEM_PROMPT_LENGTH:
+                errors[key] = (
+                    f"Must be {MAX_SYSTEM_PROMPT_LENGTH:,} characters or fewer."
+                )
+            else:
+                next_settings[key] = value.strip()
         elif key == "markdown_options":
             if not isinstance(value, dict):
                 errors[key] = "Must be an object."
             else:
-                next_settings[key].update(_validate_bool_map(value, "markdown_options", errors))
+                next_settings[key].update(
+                    _validate_bool_map(value, "markdown_options", errors)
+                )
         elif key == "privacy":
             if not isinstance(value, dict):
                 errors[key] = "Must be an object."

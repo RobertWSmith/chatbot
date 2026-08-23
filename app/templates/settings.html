@@ -7,6 +7,10 @@
     <p class="max-w-2xl text-sm text-slate-600 dark:text-slate-300">Set account defaults for new chats, display, Markdown rendering, memory tools, and privacy. Generation choices can be overridden in each chat.</p>
   </div>
   <form id="settings-form" class="settings-grid">
+    <label class="settings-span-full">System prompt
+      <textarea name="system_prompt" rows="9" maxlength="12000" required>{{ settings.system_prompt }}</textarea>
+      <small>Set the assistant's default role, tone, and response style. Tool and memory instructions are added automatically.</small>
+    </label>
     <label>Reasoning provider
       <select name="reasoning_provider">
         {% for value, label in reasoning_provider_options %}

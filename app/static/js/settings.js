@@ -16,7 +16,7 @@ if (form) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = {};
-    form.querySelectorAll("select, input[type='checkbox']").forEach((field) => {
+    form.querySelectorAll("select, textarea, input[type='checkbox']").forEach((field) => {
       setNested(data, field.name, field.type === "checkbox" ? field.checked : field.value);
     });
     const response = await fetch("/api/settings", {

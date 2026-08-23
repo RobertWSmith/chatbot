@@ -38,6 +38,13 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
 
 If `OPENAI_API_KEY` is empty, chat uses local demo streaming so the UI and auth flow can be tested without model calls.
 
+## System prompt
+
+Each account has a customizable system prompt on the Settings page. It is stored as a
+dedicated `user_settings.system_prompt` Postgres column and starts with a general-purpose
+assistant prompt. The app adds its Markdown, tool, and memory instructions at runtime so users
+can customize the assistant's role, tone, and response style without disabling those features.
+
 ## Memory
 
 Short-term conversation memory is stored in Postgres as chat messages and replayed into each agent call for the active thread. `CONVERSATION_HISTORY_LIMIT` controls how many recent turns are sent back verbatim. When a thread exceeds that limit, older turns are compacted into rolling `conversation_memory_snapshots` summaries and prepended to the agent context.

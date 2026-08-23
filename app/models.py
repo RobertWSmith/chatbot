@@ -11,6 +11,16 @@ from pgvector.sqlalchemy import Vector
 from .extensions import db
 from .security import hash_password, password_needs_rehash, verify_password
 
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful, knowledgeable, and trustworthy AI assistant. Answer the "
+    "user's questions directly and accurately. Be concise by default, but provide "
+    "additional detail when it improves understanding. Use clear structure and "
+    "practical examples when helpful. If a request is ambiguous, ask a focused "
+    "clarifying question. If you are uncertain or lack enough information, say so "
+    "rather than inventing facts. Maintain a friendly, professional tone and follow "
+    "the user's requested style and format."
+)
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -235,6 +245,12 @@ class UserSettings(db.Model):
     user_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), unique=True
     )
+    system_prompt = db.Column(
+        db.Text,
+        nullable=False,
+        default=DEFAULT_SYSTEM_PROMPT,
+        server_default=DEFAULT_SYSTEM_PROMPT,
+    )
     data = db.Column(db.JSON, nullable=False, default=default_settings)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -244,6 +260,7 @@ class UserSettings(db.Model):
     def merged(self) -> dict:
         merged = default_settings()
         merged.update(self.data or {})
+        merged["system_prompt"] = self.system_prompt or DEFAULT_SYSTEM_PROMPT
         if merged["reasoning_effort"] == "minimal":
             merged["reasoning_effort"] = "none"
         merged["markdown_options"] = {

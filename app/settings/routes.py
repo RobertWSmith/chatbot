@@ -33,10 +33,10 @@ def settings_page():
 def update_settings():
     patch = request.get_json(silent=True) or {}
     try:
-        current_user.settings.data = validate_settings_update(
-            current_user.settings.merged(), patch
-        )
+        settings = validate_settings_update(current_user.settings.merged(), patch)
     except ValueError as exc:
         return jsonify({"errors": exc.args[0]}), 400
+    current_user.settings.system_prompt = settings.pop("system_prompt")
+    current_user.settings.data = settings
     db.session.commit()
     return jsonify({"settings": current_user.settings.merged()})
