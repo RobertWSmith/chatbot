@@ -113,6 +113,7 @@ a {
 }
 
 .message.assistant {
+  width: 100%;
   margin-right: auto;
 }
 

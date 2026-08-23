@@ -55,6 +55,16 @@ def test_tool_filter_can_escape_the_composer_surface(client):
     assert b"overflow: visible" in composer_surface.group(1)
 
 
+def test_assistant_messages_can_fill_the_chat_pane(client):
+    """Ensure wide assistant content such as Markdown tables can use the full frame."""
+    response = client.get("/static/css/app.css")
+
+    assert response.status_code == 200
+    assistant_message = re.search(rb"\.message\.assistant\s*\{([^}]*)\}", response.data)
+    assert assistant_message is not None
+    assert b"width: 100%" in assistant_message.group(1)
+
+
 def test_settings_page_exposes_gpt_5_6_options(client):
     """Ensure the settings selectors expose GPT-5.6 models and reasoning efforts."""
     register(client)
