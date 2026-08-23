@@ -18,6 +18,7 @@ from app.models import (
     utcnow,
 )
 from app.services.agent import stream_agent_response
+from app.services.mcp_access import accessible_mcp_namespaces
 from app.validation import (
     MODEL_OPTIONS,
     REASONING_OPTIONS,
@@ -68,6 +69,7 @@ def create_thread():
                     "model_name": thread.model_name,
                     "reasoning_effort": thread.reasoning_effort,
                     "reasoning_provider": thread.reasoning_provider,
+                    "mcp_namespaces": thread.mcp_namespace_filter,
                 }
             }
         ),
@@ -96,20 +98,28 @@ def send_message(thread_id: str):
         if key in payload
     }
     try:
+        namespace_filter = _message_namespace_filter(
+            payload,
+            thread,
+            current_user.id,
+        )
         generation_settings = validate_settings_update(
             _thread_generation_settings(thread, current_user.settings.merged()),
             generation_patch,
         )
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         return jsonify({"errors": exc.args[0]}), 400
 
     thread.model_name = generation_settings["model_name"]
     thread.reasoning_effort = generation_settings["reasoning_effort"]
     thread.reasoning_provider = generation_settings["reasoning_provider"]
+    thread.mcp_namespace_filter = namespace_filter
+    generation_settings["mcp_namespaces"] = namespace_filter
     generation_metadata = {
         key: generation_settings[key]
         for key in ("model_name", "reasoning_effort", "reasoning_provider")
     }
+    generation_metadata["mcp_namespaces"] = namespace_filter
 
     user_id = current_user.id
     persisted_thread_id = thread.id
@@ -135,7 +145,10 @@ def send_message(thread_id: str):
             completed_at=utcnow(),
             model_name=generation_settings["model_name"],
             reasoning_effort=generation_settings["reasoning_effort"],
-            telemetry_metadata={"reasoning_provider": generation_settings["reasoning_provider"]},
+            telemetry_metadata={
+                "reasoning_provider": generation_settings["reasoning_provider"],
+                "mcp_namespaces": namespace_filter,
+            },
         )
     )
     db.session.commit()
@@ -193,6 +206,7 @@ def _generate_response(
             key: effective_settings[key]
             for key in ("model_name", "reasoning_effort", "reasoning_provider")
         }
+        generation_metadata["mcp_namespaces"] = effective_settings.get("mcp_namespaces")
         for event in stream_agent_response(
             user,
             thread,
@@ -234,7 +248,10 @@ def _generate_response(
                 token_count=token_count,
                 model_name=effective_settings["model_name"],
                 reasoning_effort=effective_settings["reasoning_effort"],
-                telemetry_metadata={"reasoning_provider": effective_settings["reasoning_provider"]},
+                telemetry_metadata={
+                    "reasoning_provider": effective_settings["reasoning_provider"],
+                    "mcp_namespaces": effective_settings.get("mcp_namespaces"),
+                },
             )
         )
         for record in tool_call_records:
@@ -302,12 +319,19 @@ def _thread_generation_settings(thread: ChatThread, user_settings: dict) -> dict
         settings["reasoning_effort"] = thread.reasoning_effort
     if thread.reasoning_provider:
         settings["reasoning_provider"] = thread.reasoning_provider
+    settings["mcp_namespaces"] = thread.mcp_namespace_filter
     return settings
 
 
 def _render_chat(selected: ChatThread, threads: list[ChatThread]):
     """Render the chat workspace with the selected thread's generation controls."""
     chat_settings = _thread_generation_settings(selected, current_user.settings.merged())
+    mcp_namespaces = accessible_mcp_namespaces(current_user.id)
+    if chat_settings["mcp_namespaces"] is not None:
+        available_names = {item.namespace for item in mcp_namespaces}
+        chat_settings["mcp_namespaces"] = sorted(
+            set(chat_settings["mcp_namespaces"]) & available_names
+        )
     return render_template(
         "chat.html",
         threads=threads,
@@ -316,7 +340,75 @@ def _render_chat(selected: ChatThread, threads: list[ChatThread]):
         model_options=MODEL_OPTIONS,
         reasoning_options=REASONING_OPTIONS,
         reasoning_provider_options=REASONING_PROVIDER_OPTIONS,
+        mcp_namespaces=mcp_namespaces,
     )
+
+
+def _message_namespace_filter(
+    payload: dict,
+    thread: ChatThread,
+    user_id: int,
+) -> list[str] | None:
+    """Resolve and validate the MCP namespace filter for one message.
+
+    Args:
+        payload: Parsed message request body.
+        thread: Chat thread whose current filter is the fallback.
+        user_id: Authenticated user whose grants bound the selection.
+
+    Returns:
+        ``None`` for all authorized namespaces or a canonical explicit list.
+
+    Raises:
+        TypeError: If a request-supplied filter is not a list.
+        ValueError: If a filter item is malformed or contains a namespace the
+            user cannot currently access.
+    """
+    authorized = {item.namespace for item in accessible_mcp_namespaces(user_id)}
+    if "mcp_namespaces" in payload:
+        return _validate_namespace_filter(payload["mcp_namespaces"], authorized)
+
+    stored_filter = thread.mcp_namespace_filter
+    if stored_filter is None:
+        return None
+    if not isinstance(stored_filter, list):
+        return []
+    return sorted(
+        {
+            namespace.strip().lower()
+            for namespace in stored_filter
+            if isinstance(namespace, str) and namespace.strip().lower() in authorized
+        }
+    )
+
+
+def _validate_namespace_filter(value: object, authorized: set[str]) -> list[str] | None:
+    """Validate a request-supplied namespace filter against current grants.
+
+    Args:
+        value: Raw JSON value from the message request.
+        authorized: Namespace names the current user may access.
+
+    Returns:
+        ``None`` for all namespaces or a sorted, deduplicated explicit list.
+
+    Raises:
+        TypeError: If the value is neither ``None`` nor a list.
+        ValueError: If a list item is invalid or names an inaccessible namespace.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise TypeError({"mcp_namespaces": "Must be null or a list of namespace names."})
+    if any(not isinstance(namespace, str) or not namespace.strip() for namespace in value):
+        raise ValueError({"mcp_namespaces": "Every namespace must be a non-empty string."})
+
+    normalized = sorted({namespace.strip().lower() for namespace in value})
+    unavailable = sorted(set(normalized) - authorized)
+    if unavailable:
+        names = ", ".join(unavailable)
+        raise ValueError({"mcp_namespaces": f"Not available to this account: {names}."})
+    return normalized
 
 
 def _get_thread_or_404(thread_id: str) -> ChatThread:

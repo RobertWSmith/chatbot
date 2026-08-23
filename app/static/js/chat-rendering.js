@@ -1,5 +1,7 @@
 const markdown = window.markdownit({
-  html: false,
+  // Markdown tables commonly use <br> for line breaks within a cell. Raw HTML
+  // is safe to parse here because the rendered output is sanitized below.
+  html: true,
   linkify: true,
   typographer: true,
   highlight: (source, language) => {

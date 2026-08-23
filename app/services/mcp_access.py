@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -29,23 +30,37 @@ class MCPToolLoadResult:
     unavailable_namespaces: tuple[str, ...]
 
 
-def accessible_mcp_namespaces(user_id: int) -> list[MCPNamespace]:
+def accessible_mcp_namespaces(
+    user_id: int,
+    namespace_filter: Iterable[str] | None = None,
+) -> list[MCPNamespace]:
     """Return enabled MCP namespaces granted by all of a user's groups.
 
     Args:
         user_id: User whose effective grants should be resolved.
+        namespace_filter: Optional namespace names used to narrow the authorized
+            result. ``None`` retains every currently authorized namespace.
 
     Returns:
         Deduplicated namespaces ordered by namespace name.
     """
-    return list(db.session.scalars(_accessible_mcp_namespaces_statement(user_id)).all())
+    normalized_filter = _normalize_namespace_filter(namespace_filter)
+    if normalized_filter == ():
+        return []
+    statement = _accessible_mcp_namespaces_statement(user_id, normalized_filter)
+    return list(db.session.scalars(statement).all())
 
 
-def _accessible_mcp_namespaces_statement(user_id: int):
+def _accessible_mcp_namespaces_statement(
+    user_id: int,
+    namespace_filter: tuple[str, ...] | None = None,
+):
     """Build the query for a user's effective MCP namespaces.
 
     Args:
         user_id: User whose group grants should be queried.
+        namespace_filter: Optional normalized namespace names used to narrow
+            the query without weakening its authorization predicates.
 
     Returns:
         A SQLAlchemy select statement for enabled namespaces.
@@ -61,7 +76,7 @@ def _accessible_mcp_namespaces_statement(user_id: int):
             GroupMembership.user_id == user_id,
         )
     )
-    return (
+    statement = (
         select(MCPNamespace)
         .where(
             MCPNamespace.enabled.is_(True),
@@ -69,9 +84,15 @@ def _accessible_mcp_namespaces_statement(user_id: int):
         )
         .order_by(MCPNamespace.namespace.asc())
     )
+    if namespace_filter is not None:
+        statement = statement.where(MCPNamespace.namespace.in_(namespace_filter))
+    return statement
 
 
-async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
+async def load_authorized_mcp_tools(
+    user_id: int,
+    namespace_filter: Iterable[str] | None = None,
+) -> MCPToolLoadResult:
     """Load tools from every MCP namespace authorized for a user.
 
     Namespace failures are isolated so one unavailable server does not hide
@@ -79,11 +100,13 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
 
     Args:
         user_id: User whose authorized tools should be loaded.
+        namespace_filter: Optional namespace names used to narrow the user's
+            authorized namespace set. An empty iterable disables MCP loading.
 
     Returns:
         Loaded tools and successful or unavailable namespace names.
     """
-    namespaces = accessible_mcp_namespaces(user_id)
+    namespaces = accessible_mcp_namespaces(user_id, namespace_filter)
     if not namespaces:
         logger.info(
             "event=mcp.discovery.skipped user_id=%s reason=no_authorized_namespaces",
@@ -139,6 +162,21 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
         ",".join(tool.name for tool in tools) or "none",
     )
     return MCPToolLoadResult(tools, tuple(loaded), tuple(unavailable))
+
+
+def _normalize_namespace_filter(namespace_filter: Iterable[str] | None) -> tuple[str, ...] | None:
+    """Canonicalize a trusted namespace filter for database comparison.
+
+    Args:
+        namespace_filter: Namespace names already validated by the request
+            boundary, or ``None`` to retain all authorized namespaces.
+
+    Returns:
+        A sorted, deduplicated tuple or ``None`` for an unrestricted query.
+    """
+    if namespace_filter is None:
+        return None
+    return tuple(sorted({str(namespace).strip().lower() for namespace in namespace_filter}))
 
 
 async def probe_mcp_namespace(item: MCPNamespace) -> list[str]:

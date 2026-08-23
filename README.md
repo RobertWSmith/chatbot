@@ -79,7 +79,9 @@ reasoning.
 The Settings page defines the model, reasoning effort, reasoning provider, and system prompt
 defaults copied into each new chat. The composer exposes the first three choices for the
 active chat, so users can switch them between turns without changing their account defaults.
-Each user and assistant message records the exact selection in its metadata and telemetry.
+It also provides a searchable MCP namespace multi-select for narrowing the external tools
+available to that chat. Each user and assistant message records the exact selections in its
+metadata and telemetry.
 
 The LangGraph provider treats `reasoning_effort` as graph topology:
 
@@ -107,6 +109,12 @@ MCP access is granted through groups. A user can belong to any number of groups 
 the deduplicated union of every enabled MCP namespace assigned to those groups. The union
 is resolved again at the start of every agent run, so removing a membership or namespace
 grant affects the next message without requiring the user to sign in again.
+
+The chat namespace filter can only narrow that authorized union. A `null` filter means all
+currently authorized namespaces, an explicit list selects a subset, and an empty list disables
+MCP tools for the chat. The server intersects every selection with current enabled grants again
+before connecting, so a saved filter cannot preserve revoked access. Built-in memory tools are
+not affected by this MCP filter.
 
 Set `PLATFORM_ADMIN_EMAILS` before registering the initial platform administrator. Existing
 accounts can instead be promoted by setting `users.is_platform_admin` directly. The flow is:

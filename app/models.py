@@ -368,6 +368,7 @@ class ChatThread(db.Model):
     model_name = db.Column(db.String(80), nullable=True)
     reasoning_effort = db.Column(db.String(32), nullable=True)
     reasoning_provider = db.Column(db.String(32), nullable=True)
+    mcp_namespace_filter = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
