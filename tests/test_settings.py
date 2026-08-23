@@ -1,5 +1,7 @@
+from html import unescape
+
 from app.extensions import db
-from app.models import User
+from app.models import DEFAULT_SYSTEM_PROMPT, User
 
 from .conftest import register
 
@@ -71,3 +73,43 @@ def test_legacy_minimal_reasoning_effort_is_normalized(client):
         db.session.commit()
 
         assert user.settings.merged()["reasoning_effort"] == "none"
+
+
+def test_system_prompt_has_a_database_default_and_is_rendered(client, app):
+    """Ensure every account receives a persisted customizable system prompt."""
+    register(client)
+
+    page = client.get("/settings")
+    assert page.status_code == 200
+    assert b'name="system_prompt"' in page.data
+    assert DEFAULT_SYSTEM_PROMPT in unescape(page.get_data(as_text=True))
+
+    with app.app_context():
+        settings = User.query.one().settings
+        assert settings.system_prompt == DEFAULT_SYSTEM_PROMPT
+        assert "system_prompt" not in settings.data
+
+
+def test_system_prompt_can_be_updated_in_its_column(client, app):
+    """Ensure prompt updates do not leak into the generic settings JSON."""
+    register(client)
+    custom_prompt = "  You are a patient Python tutor. Prefer small examples.  "
+
+    response = client.patch("/api/settings", json={"system_prompt": custom_prompt})
+    assert response.status_code == 200
+    assert response.get_json()["settings"]["system_prompt"] == custom_prompt.strip()
+
+    with app.app_context():
+        settings = User.query.one().settings
+        assert settings.system_prompt == custom_prompt.strip()
+        assert "system_prompt" not in settings.data
+
+
+def test_system_prompt_rejects_invalid_values(client):
+    """Ensure empty, non-text, and oversized prompts fail validation."""
+    register(client)
+
+    for value in ("   ", 42, "x" * 12_001):
+        response = client.patch("/api/settings", json={"system_prompt": value})
+        assert response.status_code == 400
+        assert "system_prompt" in response.get_json()["errors"]

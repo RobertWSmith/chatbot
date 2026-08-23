@@ -11,6 +11,16 @@ from pgvector.sqlalchemy import Vector
 from .extensions import db
 from .security import hash_password, password_needs_rehash, verify_password
 
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful, knowledgeable, and trustworthy AI assistant. Answer the "
+    "user's questions directly and accurately. Be concise by default, but provide "
+    "additional detail when it improves understanding. Use clear structure and "
+    "practical examples when helpful. If a request is ambiguous, ask a focused "
+    "clarifying question. If you are uncertain or lack enough information, say so "
+    "rather than inventing facts. Maintain a friendly, professional tone and follow "
+    "the user's requested style and format."
+)
+
 
 def utcnow() -> datetime:
     """Return the current timezone-aware UTC timestamp."""
@@ -26,6 +36,7 @@ def default_settings() -> dict:
     return {
         "model_name": current_app.config.get("DEFAULT_MODEL", "gpt-5.5"),
         "reasoning_effort": current_app.config.get("DEFAULT_REASONING_EFFORT", "medium"),
+        "reasoning_provider": "openai",
         "reasoning_summaries_enabled": True,
         "memory_enabled": True,
         "markdown_options": {
@@ -319,6 +330,7 @@ class UserSettings(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    system_prompt = db.Column(db.Text, nullable=False, default=DEFAULT_SYSTEM_PROMPT)
     data = db.Column(db.JSON, nullable=False, default=default_settings)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -341,6 +353,7 @@ class UserSettings(db.Model):
             }
         if merged.get("reasoning_effort") == "minimal":
             merged["reasoning_effort"] = "none"
+        merged["system_prompt"] = self.system_prompt or DEFAULT_SYSTEM_PROMPT
         return merged
 
 
@@ -354,6 +367,7 @@ class ChatThread(db.Model):
     title = db.Column(db.String(180), nullable=False, default="New chat")
     model_name = db.Column(db.String(80), nullable=True)
     reasoning_effort = db.Column(db.String(32), nullable=True)
+    reasoning_provider = db.Column(db.String(32), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

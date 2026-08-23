@@ -99,6 +99,12 @@ export function renderMcpServer(list, item) {
   );
   meta.append(grantCount);
   content.append(meta);
+  const testButton = document.createElement("button");
+  testButton.className = "secondary mt-3";
+  testButton.type = "button";
+  testButton.dataset.testNamespace = item.namespace;
+  testButton.textContent = "Test tools";
+  content.append(testButton);
   card.append(mark, content);
   list.append(card);
 }

@@ -18,7 +18,12 @@ from app.models import (
     utcnow,
 )
 from app.services.agent import stream_agent_response
-from app.validation import MODEL_OPTIONS, REASONING_OPTIONS, validate_settings_update
+from app.validation import (
+    MODEL_OPTIONS,
+    REASONING_OPTIONS,
+    REASONING_PROVIDER_OPTIONS,
+    validate_settings_update,
+)
 
 bp = Blueprint("chat", __name__)
 logger = logging.getLogger(__name__)
@@ -62,6 +67,7 @@ def create_thread():
                     "title": thread.title,
                     "model_name": thread.model_name,
                     "reasoning_effort": thread.reasoning_effort,
+                    "reasoning_provider": thread.reasoning_provider,
                 }
             }
         ),
@@ -85,7 +91,9 @@ def send_message(thread_id: str):
         return jsonify({"error": "Message is required."}), 400
 
     generation_patch = {
-        key: payload[key] for key in ("model_name", "reasoning_effort") if key in payload
+        key: payload[key]
+        for key in ("model_name", "reasoning_effort", "reasoning_provider")
+        if key in payload
     }
     try:
         generation_settings = validate_settings_update(
@@ -97,6 +105,11 @@ def send_message(thread_id: str):
 
     thread.model_name = generation_settings["model_name"]
     thread.reasoning_effort = generation_settings["reasoning_effort"]
+    thread.reasoning_provider = generation_settings["reasoning_provider"]
+    generation_metadata = {
+        key: generation_settings[key]
+        for key in ("model_name", "reasoning_effort", "reasoning_provider")
+    }
 
     user_id = current_user.id
     persisted_thread_id = thread.id
@@ -105,6 +118,7 @@ def send_message(thread_id: str):
         user_id=user_id,
         role="user",
         content=prompt,
+        message_metadata=generation_metadata,
     )
     db.session.add(user_message)
     if thread.title == "New chat":
@@ -121,6 +135,7 @@ def send_message(thread_id: str):
             completed_at=utcnow(),
             model_name=generation_settings["model_name"],
             reasoning_effort=generation_settings["reasoning_effort"],
+            telemetry_metadata={"reasoning_provider": generation_settings["reasoning_provider"]},
         )
     )
     db.session.commit()
@@ -174,6 +189,10 @@ def _generate_response(
         effective_settings = generation_settings or _thread_generation_settings(
             thread, user.settings.merged()
         )
+        generation_metadata = {
+            key: effective_settings[key]
+            for key in ("model_name", "reasoning_effort", "reasoning_provider")
+        }
         for event in stream_agent_response(
             user,
             thread,
@@ -196,6 +215,7 @@ def _generate_response(
             role="assistant",
             content="".join(assistant_text).strip(),
             reasoning_summary="".join(reasoning_text).strip() or None,
+            message_metadata=generation_metadata,
         )
         db.session.add(assistant_message)
         db.session.flush()
@@ -214,6 +234,7 @@ def _generate_response(
                 token_count=token_count,
                 model_name=effective_settings["model_name"],
                 reasoning_effort=effective_settings["reasoning_effort"],
+                telemetry_metadata={"reasoning_provider": effective_settings["reasoning_provider"]},
             )
         )
         for record in tool_call_records:
@@ -265,6 +286,7 @@ def _create_thread() -> ChatThread:
         user_id=current_user.id,
         model_name=defaults["model_name"],
         reasoning_effort=defaults["reasoning_effort"],
+        reasoning_provider=defaults["reasoning_provider"],
     )
     db.session.add(thread)
     db.session.commit()
@@ -278,6 +300,8 @@ def _thread_generation_settings(thread: ChatThread, user_settings: dict) -> dict
         settings["model_name"] = thread.model_name
     if thread.reasoning_effort:
         settings["reasoning_effort"] = thread.reasoning_effort
+    if thread.reasoning_provider:
+        settings["reasoning_provider"] = thread.reasoning_provider
     return settings
 
 
@@ -291,6 +315,7 @@ def _render_chat(selected: ChatThread, threads: list[ChatThread]):
         chat_settings=chat_settings,
         model_options=MODEL_OPTIONS,
         reasoning_options=REASONING_OPTIONS,
+        reasoning_provider_options=REASONING_PROVIDER_OPTIONS,
     )
 
 

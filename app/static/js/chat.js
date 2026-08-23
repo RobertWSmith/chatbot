@@ -16,6 +16,7 @@ if (form) {
   const submitButton = form.querySelector("button[type='submit']");
   const modelSelect = document.querySelector("#model-select");
   const reasoningSelect = document.querySelector("#reasoning-select");
+  const reasoningProviderSelect = document.querySelector("#reasoning-provider-select");
 
   function resizeComposer() {
     input.style.height = "auto";
@@ -27,6 +28,7 @@ if (form) {
     submitButton.disabled = isStreaming;
     modelSelect.disabled = isStreaming;
     reasoningSelect.disabled = isStreaming;
+    reasoningProviderSelect.disabled = isStreaming;
     submitButton.textContent = isStreaming ? "Sending" : "Send";
     form.classList.toggle("is-streaming", isStreaming);
     form.setAttribute("aria-busy", String(isStreaming));
@@ -67,6 +69,7 @@ if (form) {
           message,
           model_name: modelSelect.value,
           reasoning_effort: reasoningSelect.value,
+          reasoning_provider: reasoningProviderSelect.value,
         }),
       });
       if (!response.ok) {
@@ -91,7 +94,6 @@ if (form) {
           status.textContent = "Done";
           collapseReasoning(assistant.article);
         }
-        assistant.article.scrollIntoView({ block: "end" });
       });
     } catch {
       status.textContent = "Message failed to send.";

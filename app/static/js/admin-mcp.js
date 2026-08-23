@@ -13,6 +13,9 @@ const mcpGrantList = document.querySelector("#mcp-grant-list");
 const mcpGrantHelp = document.querySelector("#mcp-grant-help");
 const mcpGroupForm = document.querySelector("#mcp-group-form");
 const mcpGroupStatus = document.querySelector("#mcp-group-status");
+const portalBootstrapButton = document.querySelector("#bootstrap-portal");
+const portalBootstrapStatus = document.querySelector("#portal-bootstrap-status");
+const mcpTestStatus = document.querySelector("#mcp-test-status");
 
 async function responseError(response, fallback) {
   try {
@@ -22,6 +25,53 @@ async function responseError(response, fallback) {
     return fallback;
   }
 }
+
+async function testNamespace(namespace, statusNode = mcpTestStatus) {
+  showMcpStatus(statusNode, `Testing mcp_${namespace}...`);
+  const response = await fetch(
+    `/api/admin/mcp-namespaces/${encodeURIComponent(namespace)}/test`,
+    { method: "POST", headers: jsonHeaders() },
+  );
+  if (!response.ok) {
+    throw new Error(await responseError(response, "The MCP server could not be reached."));
+  }
+  const payload = await response.json();
+  const names = payload.tools.length ? payload.tools.join(", ") : "No tools advertised";
+  showMcpStatus(statusNode, `${payload.tool_count} tool(s): ${names}`, "success");
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-test-namespace]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await testNamespace(button.dataset.testNamespace);
+  } catch (error) {
+    showMcpStatus(mcpTestStatus, error.message || "The MCP probe failed.", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+portalBootstrapButton?.addEventListener("click", async () => {
+  portalBootstrapButton.disabled = true;
+  showMcpStatus(portalBootstrapStatus, "Registering and granting the Compose portal...");
+  try {
+    const response = await fetch("/api/admin/mcp-portal/bootstrap", {
+      method: "POST",
+      headers: jsonHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await responseError(response, "The portal could not be configured."));
+    }
+    await testNamespace("portal", portalBootstrapStatus);
+    window.setTimeout(() => window.location.reload(), 900);
+  } catch (error) {
+    showMcpStatus(portalBootstrapStatus, error.message || "Portal setup failed.", "error");
+  } finally {
+    portalBootstrapButton.disabled = false;
+  }
+});
 
 function addServerToGrantForm(item) {
   if (!mcpGrantForm) return;

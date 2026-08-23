@@ -14,6 +14,7 @@ from app.models import (
 )
 from app.services import mcp_access
 from app.services.mcp_access import accessible_mcp_namespaces
+from app.tenancy import routes as tenancy_routes
 
 from .conftest import register
 
@@ -191,6 +192,93 @@ def test_mcp_admin_page_renders_group_grant_management(client, app):
     assert b"Operations" in page.data
     assert b"data-revoke-grant" in page.data
     assert b"Access is recalculated" in page.data
+    assert b"http://mcp-portal:8001/mcp" in page.data
+    assert b"http://localhost:8001/mcp" in page.data
+    assert b"Configure portal for me" in page.data
+
+
+def test_portal_bootstrap_is_idempotent_and_grants_access(client, app):
+    """Ensure quick setup creates one portal, membership, and namespace grant."""
+    app.config["PLATFORM_ADMIN_EMAILS"] = ("admin@example.com",)
+    register(client, email="admin@example.com")
+
+    first = client.post("/api/admin/mcp-portal/bootstrap")
+    second = client.post("/api/admin/mcp-portal/bootstrap")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.get_json()["mcp_namespace"]["url"] == "http://mcp-portal:8001/mcp"
+    assert first.get_json()["mcp_namespace"]["transport"] == "streamable_http"
+    with app.app_context():
+        user = User.query.filter_by(email="admin@example.com").one()
+        assert [item.namespace for item in accessible_mcp_namespaces(user.id)] == ["portal"]
+        assert MCPNamespace.query.filter_by(namespace="portal").count() == 1
+        assert GroupMembership.query.filter_by(user_id=user.id).count() == 1
+        assert GroupMCPNamespace.query.count() == 1
+
+
+def test_portal_bootstrap_consolidates_legacy_portal_alias(client, app):
+    """Ensure quick setup disables duplicate portal records without losing grants."""
+    app.config["PLATFORM_ADMIN_EMAILS"] = ("admin@example.com",)
+    register(client, email="admin@example.com")
+    with app.app_context():
+        user = User.query.filter_by(email="admin@example.com").one()
+        group = Group(name="Existing", slug="existing", created_by_user_id=user.id)
+        group.memberships.append(GroupMembership(user=user, role="owner"))
+        legacy = MCPNamespace(
+            namespace="portalv2",
+            display_name="Portal workaround",
+            transport="streamable_http",
+            url="http://mcp-portal:8001/mcp",
+        )
+        group.namespace_grants.append(GroupMCPNamespace(mcp_namespace=legacy))
+        db.session.add(group)
+        db.session.commit()
+
+    response = client.post("/api/admin/mcp-portal/bootstrap")
+
+    assert response.status_code == 200
+    with app.app_context():
+        user = User.query.filter_by(email="admin@example.com").one()
+        assert [item.namespace for item in accessible_mcp_namespaces(user.id)] == ["portal"]
+        assert MCPNamespace.query.filter_by(namespace="portalv2").one().enabled is False
+        assert Group.query.count() == 1
+
+
+def test_namespace_probe_returns_discovered_tools(client, app, monkeypatch):
+    """Ensure administrators can verify a configured namespace's tool inventory."""
+    app.config["PLATFORM_ADMIN_EMAILS"] = ("admin@example.com",)
+    register(client, email="admin@example.com")
+    client.post("/api/admin/mcp-portal/bootstrap")
+
+    async def fake_probe(item):
+        """Return a deterministic tool inventory for the portal namespace."""
+        assert item.url == "http://mcp-portal:8001/mcp"
+        return ["mcp_portal_public_duckduckgo_search"]
+
+    monkeypatch.setattr(tenancy_routes, "probe_mcp_namespace", fake_probe)
+    response = client.post("/api/admin/mcp-namespaces/portal/test")
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "namespace": "portal",
+        "tool_count": 1,
+        "tools": ["mcp_portal_public_duckduckgo_search"],
+    }
+
+
+def test_settings_page_shows_effective_mcp_access(client, app):
+    """Ensure users can see their effective MCP access from account settings."""
+    app.config["PLATFORM_ADMIN_EMAILS"] = ("admin@example.com",)
+    register(client, email="admin@example.com")
+    client.post("/api/admin/mcp-portal/bootstrap")
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert b"MCP Portal" in response.data
+    assert b"http://mcp-portal:8001/mcp" in response.data
+    assert b"Configure MCP" in response.data
 
 
 def test_mcp_admin_page_explains_access_to_non_admin_users(client):

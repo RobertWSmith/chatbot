@@ -141,6 +141,18 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
     return MCPToolLoadResult(tools, tuple(loaded), tuple(unavailable))
 
 
+async def probe_mcp_namespace(item: MCPNamespace) -> list[str]:
+    """Return the tool names advertised by one namespace.
+
+    Args:
+        item: Persisted namespace to inspect.
+
+    Returns:
+        Collision-safe tool names exposed by the remote server.
+    """
+    return [tool.name for tool in await _load_namespace_tools(item)]
+
+
 async def _load_namespace_tools(item: MCPNamespace) -> list[Any]:
     """Load tools from one configured MCP namespace.
 

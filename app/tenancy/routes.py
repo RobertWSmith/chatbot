@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 import secrets
@@ -29,7 +30,7 @@ from app.models import (
     MCPNamespace,
     utcnow,
 )
-from app.services.mcp_access import accessible_mcp_namespaces
+from app.services.mcp_access import accessible_mcp_namespaces, probe_mcp_namespace
 
 from .schemas import (
     ErrorResponse,
@@ -40,6 +41,9 @@ from .schemas import (
 )
 
 bp = Blueprint("tenancy", __name__)
+
+PORTAL_CONTAINER_URL = "http://mcp-portal:8001/mcp"
+PORTAL_HOST_URL = "http://localhost:8001/mcp"
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
 
@@ -79,7 +83,13 @@ def admin_mcp_page():
     """Render the MCP namespace administration page."""
     namespaces = MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all()
     groups = Group.query.order_by(Group.name.asc(), Group.slug.asc()).all()
-    return render_template("admin/mcp.html", namespaces=namespaces, groups=groups)
+    return render_template(
+        "admin/mcp.html",
+        namespaces=namespaces,
+        groups=groups,
+        portal_container_url=PORTAL_CONTAINER_URL,
+        portal_host_url=PORTAL_HOST_URL,
+    )
 
 
 @bp.get("/api/admin/mcp-namespaces")
@@ -91,6 +101,106 @@ def list_mcp_namespaces():
         mcp_namespaces=[_admin_namespace_model(item) for item in namespaces]
     )
     return jsonify(response.model_dump(mode="json"))
+
+
+@bp.post("/api/admin/mcp-portal/bootstrap")
+@platform_admin_required
+def bootstrap_local_mcp_portal():
+    """Configure the local Compose portal and grant it to the administrator."""
+    item = MCPNamespace.query.filter_by(namespace="portal").first()
+    if item is None:
+        item = MCPNamespace(namespace="portal")
+        db.session.add(item)
+    item.display_name = "MCP Portal"
+    item.description = "Local Compose MCP portal with public web research tools."
+    item.transport = "streamable_http"
+    item.url = PORTAL_CONTAINER_URL
+    item.auth_token_env_var = None
+    item.headers = {}
+    item.enabled = True
+    db.session.flush()
+
+    owner_membership = (
+        GroupMembership.query.filter_by(user_id=current_user.id, role="owner")
+        .order_by(GroupMembership.created_at.asc())
+        .first()
+    )
+    group = owner_membership.group if owner_membership is not None else None
+    if group is None:
+        group = Group(
+            name="My MCP Portal access",
+            slug=f"mcp-portal-{current_user.id}",
+            created_by_user_id=current_user.id,
+        )
+        db.session.add(group)
+        db.session.flush()
+
+    membership = GroupMembership.query.filter_by(group_id=group.id, user_id=current_user.id).first()
+    if membership is None:
+        db.session.add(GroupMembership(group_id=group.id, user_id=current_user.id, role="owner"))
+
+    grant = GroupMCPNamespace.query.filter_by(group_id=group.id, mcp_namespace_id=item.id).first()
+    if grant is None:
+        db.session.add(GroupMCPNamespace(group_id=group.id, mcp_namespace_id=item.id))
+
+    legacy_urls = {
+        PORTAL_CONTAINER_URL,
+        PORTAL_HOST_URL,
+        "http://localhost:8000/mcp",
+    }
+    duplicates = MCPNamespace.query.filter(MCPNamespace.id != item.id).all()
+    for duplicate in duplicates:
+        if not duplicate.namespace.startswith("portal") or duplicate.url not in legacy_urls:
+            continue
+        for duplicate_grant in duplicate.group_grants:
+            existing_grant = GroupMCPNamespace.query.filter_by(
+                group_id=duplicate_grant.group_id,
+                mcp_namespace_id=item.id,
+            ).first()
+            if existing_grant is None:
+                db.session.add(
+                    GroupMCPNamespace(
+                        group_id=duplicate_grant.group_id,
+                        mcp_namespace_id=item.id,
+                    )
+                )
+        duplicate.enabled = False
+
+    db.session.commit()
+    response = MCPNamespaceEnvelope(mcp_namespace=_admin_namespace_model(item))
+    return jsonify(
+        {
+            **response.model_dump(mode="json"),
+            "group": {"id": group.id, "name": group.name, "slug": group.slug},
+        }
+    )
+
+
+@bp.post("/api/admin/mcp-namespaces/<namespace>/test")
+@platform_admin_required
+def test_mcp_namespace(namespace: str):
+    """Probe one registered namespace and return its advertised tool names.
+
+    Args:
+        namespace: Registered namespace to probe.
+    """
+    item = MCPNamespace.query.filter_by(namespace=namespace.lower()).first_or_404()
+    try:
+        tools = asyncio.run(probe_mcp_namespace(item))
+    except Exception as exc:  # noqa: BLE001 - return a safe admin diagnostic
+        current_app.logger.warning(
+            "MCP probe failed for %s: %s", item.namespace, type(exc).__name__
+        )
+        return (
+            jsonify(
+                {
+                    "error": "The MCP server could not be reached or did not return tools.",
+                    "error_type": type(exc).__name__,
+                }
+            ),
+            502,
+        )
+    return jsonify({"namespace": item.namespace, "tools": tools, "tool_count": len(tools)})
 
 
 @bp.get("/api/groups")

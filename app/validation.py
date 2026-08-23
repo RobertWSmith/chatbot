@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from .models import default_settings
+from .models import DEFAULT_SYSTEM_PROMPT, default_settings
 
 MODEL_OPTIONS = (
     "gpt-5.6-sol",
@@ -17,12 +17,16 @@ MODEL_OPTIONS = (
 REASONING_OPTIONS = ("none", "low", "medium", "high", "xhigh", "max")
 ALLOWED_MODELS = set(MODEL_OPTIONS)
 ALLOWED_REASONING = set(REASONING_OPTIONS)
+REASONING_PROVIDER_OPTIONS = (("openai", "OpenAI"), ("langgraph", "LangGraph"))
+ALLOWED_REASONING_PROVIDERS = {value for value, _label in REASONING_PROVIDER_OPTIONS}
 ALLOWED_THEMES = {"system", "light", "dark"}
 ALLOWED_FONT_SIZES = {"small", "medium", "large"}
 ALLOWED_SPEEDS = {"slow", "normal", "fast"}
+MAX_SYSTEM_PROMPT_LENGTH = 12_000
 SCALAR_SETTING_RULES = {
     "model_name": ALLOWED_MODELS,
     "reasoning_effort": ALLOWED_REASONING,
+    "reasoning_provider": ALLOWED_REASONING_PROVIDERS,
     "theme": ALLOWED_THEMES,
     "font_size": ALLOWED_FONT_SIZES,
     "streaming_speed": ALLOWED_SPEEDS,
@@ -47,6 +51,7 @@ def validate_settings_update(current: dict, patch: dict) -> dict:
     """
     next_settings = deepcopy(default_settings())
     next_settings.update(current or {})
+    next_settings.setdefault("system_prompt", DEFAULT_SYSTEM_PROMPT)
     errors: dict[str, str] = {}
 
     for key, value in patch.items():
@@ -65,6 +70,15 @@ def validate_settings_update(current: dict, patch: dict) -> dict:
                 errors[key] = "Must be an object."
             else:
                 next_settings[key].update(_validate_bool_map(value, key, errors))
+        elif key == "system_prompt":
+            if not isinstance(value, str):
+                errors[key] = "Must be text."
+            elif not value.strip():
+                errors[key] = "Must not be empty."
+            elif len(value.strip()) > MAX_SYSTEM_PROMPT_LENGTH:
+                errors[key] = f"Must be no more than {MAX_SYSTEM_PROMPT_LENGTH} characters."
+            else:
+                next_settings[key] = value.strip()
         else:
             errors[key] = "Unknown setting."
 
