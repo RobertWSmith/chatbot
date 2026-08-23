@@ -59,6 +59,23 @@
     <button class="primary sm:col-span-2" type="submit">Save settings</button>
   </form>
   <p id="settings-status" class="stream-status" aria-live="polite"></p>
+  <section class="mcp-settings-card" aria-labelledby="mcp-settings-title">
+    <div>
+      <h2 id="mcp-settings-title">MCP tools</h2>
+      {% if mcp_namespaces %}
+        <p>Your chats can use: <strong>{{ mcp_namespaces | map(attribute='display_name') | join(', ') }}</strong>.</p>
+      {% else %}
+        <p>No remote MCP namespaces are granted to your account yet.</p>
+      {% endif %}
+      <small>The Compose portal is configured inside the chatbot with <code>http://mcp-portal:8001/mcp</code>, not the host-only localhost address.</small>
+    </div>
+    {% set can_admin_mcp = current_user.is_platform_admin or current_user.email.lower() in config.get('PLATFORM_ADMIN_EMAILS', ()) %}
+    {% if can_admin_mcp %}
+      <a class="secondary" href="{{ url_for('tenancy.admin_mcp_page') }}">Configure MCP</a>
+    {% else %}
+      <span class="pill">Ask a platform admin for access</span>
+    {% endif %}
+  </section>
 </section>
 {% endblock %}
 {% block scripts %}

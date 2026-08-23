@@ -1,25 +1,27 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flask import current_app
 from flask_login import UserMixin
-from pgvector.sqlalchemy import Vector
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from pgvector.sqlalchemy import Vector
 
 from .extensions import db
 from .security import hash_password, password_needs_rehash, verify_password
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def default_settings() -> dict:
     return {
         "model_name": current_app.config.get("DEFAULT_MODEL", "gpt-5.5"),
-        "reasoning_effort": current_app.config.get("DEFAULT_REASONING_EFFORT", "medium"),
+        "reasoning_effort": current_app.config.get(
+            "DEFAULT_REASONING_EFFORT", "medium"
+        ),
         "reasoning_provider": "openai",
         "reasoning_summaries_enabled": True,
         "memory_enabled": True,
@@ -46,6 +48,7 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     is_email_verified = db.Column(db.Boolean, default=False, nullable=False)
+    is_platform_admin = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     session_version = db.Column(db.Integer, default=1, nullable=False)
@@ -56,7 +59,9 @@ class User(UserMixin, db.Model):
         uselist=False,
         cascade="all, delete-orphan",
     )
-    threads = db.relationship("ChatThread", back_populates="user", cascade="all, delete-orphan")
+    threads = db.relationship(
+        "ChatThread", back_populates="user", cascade="all, delete-orphan"
+    )
     conversation_memory_snapshots = db.relationship(
         "ConversationMemorySnapshot",
         back_populates="user",
@@ -77,6 +82,11 @@ class User(UserMixin, db.Model):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    group_memberships = db.relationship(
+        "GroupMembership",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     def set_password(self, password: str) -> None:
         self.password_hash = hash_password(password)
@@ -92,7 +102,7 @@ class User(UserMixin, db.Model):
         return serializer.dumps({"user_id": self.id, "purpose": purpose})
 
     @staticmethod
-    def verify_token(token: str, purpose: str, max_age: int = 3600) -> "User | None":
+    def verify_token(token: str, purpose: str, max_age: int = 3600) -> User | None:
         serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
         try:
             data = serializer.loads(token, max_age=max_age)
@@ -103,11 +113,128 @@ class User(UserMixin, db.Model):
         return db.session.get(User, data.get("user_id"))
 
 
+class Group(db.Model):
+    __tablename__ = "groups"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(120), nullable=False)
+    slug = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    created_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    creator = db.relationship("User", foreign_keys=[created_by_user_id])
+    memberships = db.relationship(
+        "GroupMembership",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    namespace_grants = db.relationship(
+        "GroupMCPNamespace",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+
+class GroupMembership(db.Model):
+    __tablename__ = "group_memberships"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "group_id", "user_id", name="uq_group_memberships_group_user"
+        ),
+        db.CheckConstraint(
+            "role IN ('owner', 'member')", name="ck_group_memberships_role"
+        ),
+        db.Index("ix_group_memberships_user_group", "user_id", "group_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(
+        db.String(36),
+        db.ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role = db.Column(db.String(20), nullable=False, default="member")
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    group = db.relationship("Group", back_populates="memberships")
+    user = db.relationship("User", back_populates="group_memberships")
+
+
+class MCPNamespace(db.Model):
+    __tablename__ = "mcp_namespaces"
+    __table_args__ = (
+        db.CheckConstraint(
+            "transport IN ('http', 'streamable_http', 'sse')",
+            name="ck_mcp_namespaces_transport",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    namespace = db.Column(db.String(63), unique=True, nullable=False, index=True)
+    display_name = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.Text, nullable=False, default="")
+    transport = db.Column(db.String(32), nullable=False, default="http")
+    url = db.Column(db.String(2048), nullable=False)
+    auth_token_env_var = db.Column(db.String(255), nullable=True)
+    headers = db.Column(db.JSON, nullable=False, default=dict)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    group_grants = db.relationship(
+        "GroupMCPNamespace",
+        back_populates="mcp_namespace",
+        cascade="all, delete-orphan",
+    )
+
+
+class GroupMCPNamespace(db.Model):
+    __tablename__ = "group_mcp_namespaces"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "group_id",
+            "mcp_namespace_id",
+            name="uq_group_mcp_namespaces_group_namespace",
+        ),
+        db.Index(
+            "ix_group_mcp_namespaces_namespace_group", "mcp_namespace_id", "group_id"
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(
+        db.String(36),
+        db.ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mcp_namespace_id = db.Column(
+        db.Integer,
+        db.ForeignKey("mcp_namespaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    group = db.relationship("Group", back_populates="namespace_grants")
+    mcp_namespace = db.relationship("MCPNamespace", back_populates="group_grants")
+
+
 class UserSettings(db.Model):
     __tablename__ = "user_settings"
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), unique=True
+    )
     data = db.Column(db.JSON, nullable=False, default=default_settings)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -134,7 +261,9 @@ class ChatThread(db.Model):
     __tablename__ = "chat_threads"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     title = db.Column(db.String(180), nullable=False, default="New chat")
     model_name = db.Column(db.String(80), nullable=True)
     reasoning_effort = db.Column(db.String(32), nullable=True)
@@ -173,9 +302,13 @@ class ChatMessage(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     thread_id = db.Column(
-        db.String(36), db.ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False
+        db.String(36),
+        db.ForeignKey("chat_threads.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     role = db.Column(db.String(32), nullable=False)
     content = db.Column(db.Text, nullable=False)
     reasoning_summary = db.Column(db.Text, nullable=True)
@@ -199,7 +332,12 @@ class ChatMessage(db.Model):
 class MessageTelemetry(db.Model):
     __tablename__ = "message_telemetry"
     __table_args__ = (
-        db.Index("ix_message_telemetry_thread_role_created", "thread_id", "role", "created_at"),
+        db.Index(
+            "ix_message_telemetry_thread_role_created",
+            "thread_id",
+            "role",
+            "created_at",
+        ),
         db.Index("ix_message_telemetry_first_token_at", "first_token_at"),
     )
 
@@ -210,9 +348,13 @@ class MessageTelemetry(db.Model):
         unique=True,
         nullable=False,
     )
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     thread_id = db.Column(
-        db.String(36), db.ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False
+        db.String(36),
+        db.ForeignKey("chat_threads.id", ondelete="CASCADE"),
+        nullable=False,
     )
     role = db.Column(db.String(32), nullable=False)
     request_received_at = db.Column(db.DateTime(timezone=True), nullable=False)
@@ -242,15 +384,23 @@ class ConversationMemorySnapshot(db.Model):
     )
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     thread_id = db.Column(
-        db.String(36), db.ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False
+        db.String(36),
+        db.ForeignKey("chat_threads.id", ondelete="CASCADE"),
+        nullable=False,
     )
     message_start_id = db.Column(
-        db.Integer, db.ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True
+        db.Integer,
+        db.ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
     )
     message_end_id = db.Column(
-        db.Integer, db.ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True
+        db.Integer,
+        db.ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
     )
     summary = db.Column(db.Text, nullable=False)
     token_count = db.Column(db.Integer, nullable=True)
@@ -275,7 +425,9 @@ class ConversationMemory(db.Model):
             "confidence >= 0 AND confidence <= 1",
             name="ck_conversation_memories_confidence",
         ),
-        db.CheckConstraint("recall_count >= 0", name="ck_conversation_memories_recall_count"),
+        db.CheckConstraint(
+            "recall_count >= 0", name="ck_conversation_memories_recall_count"
+        ),
         db.Index(
             "ix_conversation_memories_user_thread_status_created",
             "user_id",
@@ -293,12 +445,18 @@ class ConversationMemory(db.Model):
     )
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     thread_id = db.Column(
-        db.String(36), db.ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False
+        db.String(36),
+        db.ForeignKey("chat_threads.id", ondelete="CASCADE"),
+        nullable=False,
     )
     source_message_id = db.Column(
-        db.Integer, db.ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True
+        db.Integer,
+        db.ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
     )
     snapshot_id = db.Column(
         db.String(36),
@@ -332,9 +490,15 @@ class PendingMemory(db.Model):
     __tablename__ = "pending_memories"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    source_thread_id = db.Column(db.String(36), db.ForeignKey("chat_threads.id"), nullable=True)
-    source_message_id = db.Column(db.Integer, db.ForeignKey("chat_messages.id"), nullable=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    source_thread_id = db.Column(
+        db.String(36), db.ForeignKey("chat_threads.id"), nullable=True
+    )
+    source_message_id = db.Column(
+        db.Integer, db.ForeignKey("chat_messages.id"), nullable=True
+    )
     memory_text = db.Column(db.Text, nullable=False)
     category = db.Column(db.String(80), nullable=False, default="preference")
     confidence = db.Column(db.Float, nullable=False, default=0.5)
@@ -363,7 +527,9 @@ class LongTermMemory(db.Model):
     )
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     source_pending_memory_id = db.Column(
         db.String(36),
         db.ForeignKey("pending_memories.id", ondelete="SET NULL"),
@@ -382,4 +548,6 @@ class LongTermMemory(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     user = db.relationship("User", back_populates="long_term_memories")
-    source_proposal = db.relationship("PendingMemory", back_populates="long_term_memory")
+    source_proposal = db.relationship(
+        "PendingMemory", back_populates="long_term_memory"
+    )

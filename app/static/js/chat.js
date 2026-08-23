@@ -18,6 +18,16 @@ if (window.markdownitTaskLists) {
   md.use(window.markdownitTaskLists);
 }
 
+if (window.texmath && window.katex) {
+  md.use(window.texmath, {
+    engine: window.katex,
+    delimiters: ["dollars", "brackets"],
+    katexOptions: {
+      throwOnError: false,
+    },
+  });
+}
+
 function renderMarkdown(target, source) {
   const balanced = balanceMarkdown(source);
   const dirty = md.render(balanced);

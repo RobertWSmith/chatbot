@@ -65,3 +65,41 @@ Independent tool calls emitted in the same model turn run concurrently through L
 run in separate turns—for example, web search must return a URL before the resolver can open it.
 Database-backed memory tools are serialized within each agent run because they share a
 Flask-SQLAlchemy session; network-only search and URL resolution calls remain concurrent.
+
+## MCP Portal
+
+Docker Compose builds the sibling `../mcp-portal` project and starts it with the chatbot.
+The portal includes the `public_duckduckgo_search` and `public_resolve_web_link` tools.
+
+Start or rebuild the complete stack with:
+
+```powershell
+docker compose up --build
+```
+
+The MCP endpoint is available at:
+
+- From the chatbot container: `http://mcp-portal:8001/mcp`
+- From the host: `http://localhost:8001/mcp` (or the port set by
+  `MCP_PORTAL_HOST_PORT`)
+
+For an MCP client, configure the portal as a streamable HTTP server:
+
+```json
+{
+  "namespace": "portal",
+  "display_name": "MCP Portal",
+  "transport": "streamable_http",
+  "url": "http://mcp-portal:8001/mcp",
+  "headers": {}
+}
+```
+
+The Compose defaults use no portal authentication and no portal database backend for local
+development. Configure an authentication provider before exposing the portal beyond the local
+machine or its trusted container network.
+
+Platform administrators configure and grant MCP namespaces at `/admin/mcp`. Set
+`PLATFORM_ADMIN_EMAILS`, restart the web service, and use **Configure portal for me** for the
+local Compose portal. See [docs/mcp-portal.md](docs/mcp-portal.md) for the complete runbook and
+troubleshooting guide.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Generator
@@ -14,6 +15,7 @@ from app.services.conversation_summary import (
     snapshot_context_message,
     summarize_overflowing_conversation,
 )
+from app.services.mcp_access import MCPToolLoadResult, load_authorized_mcp_tools
 from app.services.rag_memory import (
     format_memory_search_results,
     search_long_term_memories,
@@ -64,11 +66,15 @@ def _stream_langgraph_response(
     from langchain.messages import AIMessageChunk
 
     model = _build_chat_model(settings, provider_reasoning=True)
+    mcp_result = _load_mcp_tools(user.id)
+    for namespace in mcp_result.unavailable_namespaces:
+        yield {"type": "status", "text": f"MCP namespace {namespace} is unavailable"}
+    local_tools = _build_agent_tools(user, thread, settings)
     agent = create_agent(
         model=model,
-        tools=_build_agent_tools(user, thread, settings),
+        tools=[*local_tools, *mcp_result.tools],
         store=None,
-        system_prompt=_system_prompt(settings),
+        system_prompt=_system_prompt(settings, mcp_result.loaded_namespaces),
     )
 
     yield {"type": "status", "text": "Thinking"}
@@ -115,9 +121,21 @@ def _stream_custom_reasoning_graph_response(
     from langgraph.graph import END, START, StateGraph
 
     model = _build_chat_model(settings, provider_reasoning=False)
+    mcp_result = _load_mcp_tools(user.id)
+    for namespace in mcp_result.unavailable_namespaces:
+        yield {"type": "status", "text": f"MCP namespace {namespace} is unavailable"}
     graph = StateGraph(ReasoningState)
     nodes = _reasoning_workflow_for_effort(settings["reasoning_effort"])
-    node_builders = _custom_reasoning_nodes(user, thread, settings, model)
+    if mcp_result.tools and "gather_context" not in nodes:
+        nodes = ["gather_context", *nodes]
+    node_builders = _custom_reasoning_nodes(
+        user,
+        thread,
+        settings,
+        model,
+        mcp_tools=mcp_result.tools,
+        mcp_namespaces=mcp_result.loaded_namespaces,
+    )
 
     previous = START
     for node_name in nodes:
@@ -136,6 +154,31 @@ def _stream_custom_reasoning_graph_response(
         for node_name, values in update.items():
             yield {"type": "status", "text": _reasoning_status(node_name)}
             yield from _reasoning_events(values or {}, settings)
+
+
+def _load_mcp_tools(user_id: int) -> MCPToolLoadResult:
+    """Load authorized remote tools at the synchronous Flask streaming boundary."""
+    return asyncio.run(load_authorized_mcp_tools(user_id))
+
+
+def _mcp_search_context(tools: list[Any], query: str) -> str:
+    """Use the portal search tool as research context for the custom reasoning graph."""
+    search_tool = next(
+        (tool for tool in tools if "duckduckgo_search" in tool.name.lower()),
+        None,
+    )
+    if search_tool is None or not query.strip():
+        return ""
+    try:
+        result = asyncio.run(search_tool.ainvoke({"query": query}))
+    except Exception as exc:  # noqa: BLE001 - MCP context is optional to the response
+        LOGGER.warning("MCP web search failed: %s", type(exc).__name__)
+        return ""
+    if isinstance(result, dict) and isinstance(result.get("results"), str):
+        text = result["results"]
+    else:
+        text = str(result)
+    return f"MCP Portal web search results:\n{text[:12000]}" if text.strip() else ""
 
 
 def _build_chat_model(settings: dict, *, provider_reasoning: bool):
@@ -197,13 +240,19 @@ def _custom_reasoning_nodes(
     thread: ChatThread,
     settings: dict,
     model: Any,
+    *,
+    mcp_tools: list[Any] | None = None,
+    mcp_namespaces: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     def gather_context(state: ReasoningState) -> dict[str, str]:
         context_parts = [_format_recent_context(state["messages"])]
+        prompt = _last_user_message(state["messages"])
+        if mcp_tools:
+            mcp_context = _mcp_search_context(mcp_tools, prompt)
+            if mcp_context:
+                context_parts.append(mcp_context)
         if settings.get("memory_enabled", True):
-            memory_context = _safe_memory_context(
-                user, _last_user_message(state["messages"])
-            )
+            memory_context = _safe_memory_context(user, prompt)
             if memory_context:
                 context_parts.append(memory_context)
         return {"context": "\n\n".join(part for part in context_parts if part)}
@@ -229,7 +278,10 @@ def _custom_reasoning_nodes(
     def answer(state: ReasoningState) -> dict[str, str]:
         response = model.invoke(
             [
-                {"role": "system", "content": _system_prompt(settings)},
+                {
+                    "role": "system",
+                    "content": _system_prompt(settings, mcp_namespaces),
+                },
                 {
                     "role": "user",
                     "content": _reasoning_prompt(
@@ -244,7 +296,10 @@ def _custom_reasoning_nodes(
     def draft(state: ReasoningState) -> dict[str, str]:
         response = model.invoke(
             [
-                {"role": "system", "content": _system_prompt(settings)},
+                {
+                    "role": "system",
+                    "content": _system_prompt(settings, mcp_namespaces),
+                },
                 {
                     "role": "user",
                     "content": _reasoning_prompt(
@@ -259,7 +314,10 @@ def _custom_reasoning_nodes(
     def alternative_draft(state: ReasoningState) -> dict[str, str]:
         response = model.invoke(
             [
-                {"role": "system", "content": _system_prompt(settings)},
+                {
+                    "role": "system",
+                    "content": _system_prompt(settings, mcp_namespaces),
+                },
                 {
                     "role": "user",
                     "content": _reasoning_prompt(
@@ -294,7 +352,10 @@ def _custom_reasoning_nodes(
     def finalize(state: ReasoningState) -> dict[str, str]:
         response = model.invoke(
             [
-                {"role": "system", "content": _system_prompt(settings)},
+                {
+                    "role": "system",
+                    "content": _system_prompt(settings, mcp_namespaces),
+                },
                 {
                     "role": "user",
                     "content": _reasoning_prompt(
@@ -661,9 +722,20 @@ def _stream_demo_response(
         }
 
 
-def _system_prompt(settings: dict[str, Any]) -> str:
+def _system_prompt(
+    settings: dict[str, Any], mcp_namespaces: tuple[str, ...] = ()
+) -> str:
+    mcp_guidance = ""
+    if mcp_namespaces:
+        mcp_guidance = (
+            "Remote MCP tools are available from these authorized namespaces: "
+            f"{', '.join(mcp_namespaces)}. Prefer the MCP Portal DuckDuckGo search tool "
+            "for current web information when the portal namespace is present. "
+        )
     return (
         "You are a helpful chatbot. Respond in clean GitHub-flavored Markdown. "
+        "Write inline math as `$...$` and display math as `\\[...\\]`. "
+        f"{mcp_guidance}"
         "Use web_search for current events, recently changed facts, or external information "
         "that is not available from the conversation. Summarize search results plainly and "
         "include source links when the tool returns them. Use resolve_web_link after web_search "

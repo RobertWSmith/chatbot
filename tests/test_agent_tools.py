@@ -34,7 +34,9 @@ def test_agent_registers_duckduckgo_web_search_tool(app):
     with app.app_context():
         user = User(id=1, email="search@example.com")
         thread = ChatThread(id="thread-1", user_id=user.id)
-        tools = _build_agent_tools(user, thread, {"memory_enabled": True, "privacy": {}})
+        tools = _build_agent_tools(
+            user, thread, {"memory_enabled": True, "privacy": {}}
+        )
 
     assert {tool.name for tool in tools} == {
         "recall_user_memory",
@@ -86,7 +88,10 @@ def test_web_search_failure_is_returned_as_tool_result():
 
     result = _run_web_search(FailingSearchAPI(), "Agents SDK tracing")
 
-    assert result == "Web search is temporarily unavailable. Ask the user to retry shortly."
+    assert (
+        result
+        == "Web search is temporarily unavailable. Ask the user to retry shortly."
+    )
 
 
 def test_system_prompt_explains_web_search_policy():
@@ -98,6 +103,13 @@ def test_system_prompt_explains_web_search_policy():
     assert "issue them together in the same response" in prompt
     assert "wait for web_search to return URLs" in prompt
     assert "Call propose_memory one at a time" in prompt
+
+
+def test_system_prompt_prefers_portal_search_when_authorized():
+    prompt = _system_prompt({}, ("portal",))
+
+    assert "Remote MCP tools are available" in prompt
+    assert "Prefer the MCP Portal DuckDuckGo search tool" in prompt
 
 
 @pytest.mark.parametrize(
@@ -131,7 +143,9 @@ def test_independent_web_resolutions_run_concurrently(app, monkeypatch):
     with app.app_context():
         user = User(id=1, email="parallel-web@example.com")
         thread = ChatThread(id="thread-1", user_id=user.id)
-        tools = _build_agent_tools(user, thread, {"memory_enabled": True, "privacy": {}})
+        tools = _build_agent_tools(
+            user, thread, {"memory_enabled": True, "privacy": {}}
+        )
         messages = _run_tool_calls(
             tools,
             [
@@ -175,7 +189,9 @@ def test_memory_tools_serialize_shared_database_session(app, monkeypatch):
     with app.app_context():
         user = User(id=1, email="serial-memory@example.com")
         thread = ChatThread(id="thread-1", user_id=user.id)
-        tools = _build_agent_tools(user, thread, {"memory_enabled": True, "privacy": {}})
+        tools = _build_agent_tools(
+            user, thread, {"memory_enabled": True, "privacy": {}}
+        )
         _run_tool_calls(
             tools,
             [

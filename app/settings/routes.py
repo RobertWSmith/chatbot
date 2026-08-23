@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 
 from app.extensions import db
+from app.services.mcp_access import accessible_mcp_namespaces
 from app.validation import (
     MODEL_OPTIONS,
     REASONING_OPTIONS,
@@ -23,6 +24,7 @@ def settings_page():
         model_options=MODEL_OPTIONS,
         reasoning_options=REASONING_OPTIONS,
         reasoning_provider_options=REASONING_PROVIDER_OPTIONS,
+        mcp_namespaces=accessible_mcp_namespaces(current_user.id),
     )
 
 
@@ -31,7 +33,9 @@ def settings_page():
 def update_settings():
     patch = request.get_json(silent=True) or {}
     try:
-        current_user.settings.data = validate_settings_update(current_user.settings.merged(), patch)
+        current_user.settings.data = validate_settings_update(
+            current_user.settings.merged(), patch
+        )
     except ValueError as exc:
         return jsonify({"errors": exc.args[0]}), 400
     db.session.commit()

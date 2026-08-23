@@ -18,10 +18,17 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.5")
     DEFAULT_REASONING_EFFORT = os.getenv("DEFAULT_REASONING_EFFORT", "medium")
-    MEMORY_EMBEDDING_MODEL = os.getenv("MEMORY_EMBEDDING_MODEL", "text-embedding-3-small")
+    MEMORY_EMBEDDING_MODEL = os.getenv(
+        "MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"
+    )
     MEMORY_EMBEDDING_DIMENSIONS = int(os.getenv("MEMORY_EMBEDDING_DIMENSIONS", "1536"))
     CONVERSATION_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "24"))
     TOOL_MAX_CONCURRENCY = int(os.getenv("TOOL_MAX_CONCURRENCY", "4"))
+    PLATFORM_ADMIN_EMAILS = tuple(
+        email.strip().lower()
+        for email in os.getenv("PLATFORM_ADMIN_EMAILS", "").split(",")
+        if email.strip()
+    )
     LANGGRAPH_DATABASE_URL = os.getenv(
         "LANGGRAPH_DATABASE_URL",
         "postgresql://postgres:postgres@localhost:5432/langgraph_chat?sslmode=disable",

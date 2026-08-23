@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}MCP administration unavailable{% endblock %}
+{% block content %}
+<section class="auth-panel">
+  <h1>Platform administrator access required</h1>
+  <p>Add your account email to <code>PLATFORM_ADMIN_EMAILS</code>, restart the web container, then open <code>/admin/mcp</code> again.</p>
+  <p>See the local <code>docs/mcp-portal.md</code> runbook for the complete setup contract.</p>
+  <a class="secondary" href="{{ url_for('settings.settings_page') }}">Back to settings</a>
+</section>
+{% endblock %}

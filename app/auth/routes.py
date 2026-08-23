@@ -1,12 +1,26 @@
 from __future__ import annotations
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required, login_user, logout_user
 
 from app.extensions import db
 from app.models import User, UserSettings
 
-from .forms import DeleteAccountForm, ForgotPasswordForm, LoginForm, RegisterForm, ResetPasswordForm
+from .forms import (
+    DeleteAccountForm,
+    ForgotPasswordForm,
+    LoginForm,
+    RegisterForm,
+    ResetPasswordForm,
+)
 
 bp = Blueprint("auth", __name__)
 
@@ -42,13 +56,20 @@ def register():
         if User.query.filter_by(email=email).first():
             flash("An account already exists for that email.", "error")
         else:
-            user = User(email=email)
+            user = User(
+                email=email,
+                is_platform_admin=email
+                in current_app.config.get("PLATFORM_ADMIN_EMAILS", ()),
+            )
             user.set_password(form.password.data)
             user.settings = UserSettings()
             db.session.add(user)
             db.session.commit()
             login_user(user)
-            flash("Account created. Email verification is ready to wire to your mail provider.", "info")
+            flash(
+                "Account created. Email verification is ready to wire to your mail provider.",
+                "info",
+            )
             return redirect(url_for("chat.chat_home"))
     return render_template("auth/register.html", form=form)
 
@@ -70,7 +91,9 @@ def forgot_password():
         if user:
             reset_token = user.make_token("password-reset")
         flash("If that account exists, a reset link will be sent.", "info")
-    return render_template("auth/forgot_password.html", form=form, reset_token=reset_token)
+    return render_template(
+        "auth/forgot_password.html", form=form, reset_token=reset_token
+    )
 
 
 @bp.get("/reset-password/<token>")
@@ -108,7 +131,10 @@ def verify_email(token: str):
 @login_required
 def delete_account():
     form = DeleteAccountForm()
-    if form.validate_on_submit() and form.email.data.lower().strip() == current_user.email:
+    if (
+        form.validate_on_submit()
+        and form.email.data.lower().strip() == current_user.email
+    ):
         db.session.delete(current_user)
         db.session.commit()
         logout_user()

@@ -17,10 +17,44 @@ services:
       MEMORY_EMBEDDING_DIMENSIONS: ${MEMORY_EMBEDDING_DIMENSIONS:-1536}
       CONVERSATION_HISTORY_LIMIT: ${CONVERSATION_HISTORY_LIMIT:-24}
       TOOL_MAX_CONCURRENCY: ${TOOL_MAX_CONCURRENCY:-4}
+      PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
       FLASK_DEBUG: "0"
     depends_on:
       db:
         condition: service_healthy
+      mcp-portal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp-portal:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-portal
+      additional_contexts:
+        portal: ../mcp-portal
+    ports:
+      - "${MCP_PORTAL_HOST_PORT:-8001}:8001"
+    environment:
+      MCP_PORTAL_MODEL_PROVIDER: ${MCP_PORTAL_MODEL_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MCP_PORTAL_DATABASE_PROVIDER: ${MCP_PORTAL_DATABASE_PROVIDER:-none}
+      MCP_PORTAL_AUTH_PROVIDER: ${MCP_PORTAL_AUTH_PROVIDER:-none}
+      MCP_PORTAL_PRODUCTION_REQUIRE_AUTH: ${MCP_PORTAL_PRODUCTION_REQUIRE_AUTH:-false}
+      MCP_PORTAL_HTTP_PATH: /mcp
+      MCP_PORTAL_HEALTH_PATH: /healthz
+      MCP_PORTAL_READINESS_PATH: /readyz
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:8001/healthz', timeout=5).read()
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     restart: unless-stopped
 
   db:
