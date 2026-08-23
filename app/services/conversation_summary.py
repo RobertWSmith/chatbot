@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from flask import current_app
-
 from app.extensions import db
 from app.models import ChatMessage, ChatThread, ConversationMemorySnapshot, User
 
@@ -12,6 +10,18 @@ def summarize_overflowing_conversation(
     messages: list[ChatMessage],
     keep_count: int,
 ) -> ConversationMemorySnapshot | None:
+    """Roll messages outside the recent-history window into a snapshot.
+
+    Args:
+        user: Owner of the conversation.
+        thread: Thread whose messages are being compacted.
+        messages: Chronologically ordered conversation messages.
+        keep_count: Number of recent messages to preserve verbatim.
+
+    Returns:
+        The latest snapshot, or ``None`` when the thread has no snapshot and
+        does not require one.
+    """
     if len(messages) <= keep_count:
         return latest_snapshot(user.id, thread.id)
 
@@ -47,6 +57,15 @@ def summarize_overflowing_conversation(
 
 
 def latest_snapshot(user_id: int, thread_id: str) -> ConversationMemorySnapshot | None:
+    """Return the newest conversation snapshot for a user-owned thread.
+
+    Args:
+        user_id: Owner's primary key.
+        thread_id: Chat-thread identifier.
+
+    Returns:
+        The newest matching snapshot, or ``None``.
+    """
     return (
         ConversationMemorySnapshot.query.filter_by(user_id=user_id, thread_id=thread_id)
         .order_by(ConversationMemorySnapshot.created_at.desc())
@@ -55,6 +74,15 @@ def latest_snapshot(user_id: int, thread_id: str) -> ConversationMemorySnapshot 
 
 
 def build_summary(prior_summary: str, messages: list[ChatMessage]) -> str:
+    """Build a deterministic rolling summary from earlier messages.
+
+    Args:
+        prior_summary: Existing rolling summary, if any.
+        messages: Newly overflowing messages in chronological order.
+
+    Returns:
+        A compact plain-text conversation summary.
+    """
     lines = []
     if prior_summary:
         lines.append("Earlier summary:")
@@ -73,6 +101,14 @@ def build_summary(prior_summary: str, messages: list[ChatMessage]) -> str:
 
 
 def snapshot_context_message(snapshot: ConversationMemorySnapshot | None) -> dict[str, str] | None:
+    """Convert a snapshot into a system message for the chat model.
+
+    Args:
+        snapshot: Rolling conversation snapshot.
+
+    Returns:
+        A model-compatible system message, or ``None`` without a snapshot.
+    """
     if not snapshot:
         return None
     return {
@@ -85,4 +121,12 @@ def snapshot_context_message(snapshot: ConversationMemorySnapshot | None) -> dic
 
 
 def estimate_token_count(text: str) -> int:
+    """Estimate token count using whitespace-delimited words.
+
+    Args:
+        text: Text to estimate.
+
+    Returns:
+        A positive approximate token count.
+    """
     return max(1, len(text.split()))

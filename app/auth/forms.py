@@ -4,6 +4,8 @@ from wtforms.validators import DataRequired, Email, EqualTo, Length
 
 
 class LoginForm(FlaskForm):
+    """Collect credentials for an existing account."""
+
     email = EmailField("Email", validators=[DataRequired(), Email()])
     password = PasswordField("Password", validators=[DataRequired()])
     remember = BooleanField("Remember me")
@@ -11,6 +13,8 @@ class LoginForm(FlaskForm):
 
 
 class RegisterForm(FlaskForm):
+    """Collect and confirm credentials for a new account."""
+
     email = EmailField("Email", validators=[DataRequired(), Email()])
     password = PasswordField("Password", validators=[DataRequired(), Length(min=12)])
     confirm_password = PasswordField(
@@ -21,11 +25,15 @@ class RegisterForm(FlaskForm):
 
 
 class ForgotPasswordForm(FlaskForm):
+    """Collect the account email for a password-reset request."""
+
     email = EmailField("Email", validators=[DataRequired(), Email()])
     submit = SubmitField("Send reset link")
 
 
 class ResetPasswordForm(FlaskForm):
+    """Collect and confirm a replacement password."""
+
     password = PasswordField("New password", validators=[DataRequired(), Length(min=12)])
     confirm_password = PasswordField(
         "Confirm password",
@@ -35,5 +43,7 @@ class ResetPasswordForm(FlaskForm):
 
 
 class DeleteAccountForm(FlaskForm):
+    """Require an email confirmation before deleting an account."""
+
     email = StringField("Confirm email", validators=[DataRequired()])
     submit = SubmitField("Delete account")

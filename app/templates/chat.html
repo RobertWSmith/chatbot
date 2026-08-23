@@ -30,9 +30,9 @@
       <article class="message {{ message.role }}">
         <div class="message-role">{{ "You" if message.role == "user" else "Assistant" }}</div>
         {% if message.reasoning_summary %}
-          <details class="reasoning" open>
+          <details class="reasoning">
             <summary>Reasoning summary</summary>
-            <div class="markdown">{{ message.reasoning_summary }}</div>
+            <div class="markdown" data-markdown-source="{{ message.reasoning_summary | e }}">{{ message.reasoning_summary }}</div>
           </details>
         {% endif %}
         <div class="markdown" data-markdown-source="{{ message.content | e }}">{{ message.content }}</div>
@@ -86,5 +86,5 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat.js') }}"></script>
 {% endblock %}

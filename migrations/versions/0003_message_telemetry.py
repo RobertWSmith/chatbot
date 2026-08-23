@@ -1,11 +1,12 @@
-"""add message telemetry
+"""Add message telemetry.
 
 Revision ID: 0003_message_telemetry
 Revises: 0002_conversation_memory
 Create Date: 2026-05-09 00:00:00.000000
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0003_message_telemetry"
 down_revision = "0002_conversation_memory"
@@ -14,6 +15,7 @@ depends_on = None
 
 
 def upgrade():
+    """Add per-message lifecycle telemetry and supporting indexes."""
     op.create_table(
         "message_telemetry",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -48,6 +50,7 @@ def upgrade():
 
 
 def downgrade():
+    """Remove the message telemetry table and its indexes."""
     op.drop_index("ix_message_telemetry_thread_role_created", table_name="message_telemetry")
     op.drop_index("ix_message_telemetry_first_token_at", table_name="message_telemetry")
     op.drop_table("message_telemetry")

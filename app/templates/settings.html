@@ -18,14 +18,14 @@
         {% endfor %}
       </select>
     </label>
-    <label>Model
+    <label>Default model
       <select name="model_name">
         {% for model in model_options %}
           <option value="{{ model }}" {% if settings.model_name == model %}selected{% endif %}>{{ model }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>Reasoning effort
+    <label>Default reasoning effort
       <select name="reasoning_effort">
         {% for effort in reasoning_options %}
           <option value="{{ effort }}" {% if settings.reasoning_effort == effort %}selected{% endif %}>{{ effort }}</option>
@@ -83,5 +83,5 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/settings.js') }}"></script>
 {% endblock %}

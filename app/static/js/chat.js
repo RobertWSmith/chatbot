@@ -53,40 +53,7 @@ function appendMessage(role, text = "") {
   return { article, markdown };
 }
 
-function ensureReasoning(article) {
-  let details = article.querySelector(".reasoning");
-  if (!details) {
-    details = document.createElement("details");
-    details.className = "reasoning";
-    details.open = true;
-    details.innerHTML = "<summary>Reasoning summary</summary><div class=\"markdown\"></div>";
-    article.insertBefore(details, article.querySelector(".markdown"));
-  }
-  return details.querySelector(".markdown");
-}
-
-async function readSse(response, onEvent) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop();
-    for (const part of parts) {
-      const eventLine = part.split("\n").find((line) => line.startsWith("event: "));
-      const dataLine = part.split("\n").find((line) => line.startsWith("data: "));
-      if (!eventLine || !dataLine) continue;
-      onEvent(eventLine.slice(7), JSON.parse(dataLine.slice(6)));
-    }
-  }
-}
-
-document.querySelectorAll("[data-markdown-source]").forEach((node) => {
-  renderMarkdown(node, node.dataset.markdownSource || node.textContent);
-});
+renderExistingMarkdown();
 
 const form = document.querySelector("#chat-form");
 if (form) {
@@ -109,6 +76,7 @@ if (form) {
     reasoningSelect.disabled = isStreaming;
     submitButton.textContent = isStreaming ? "Sending" : "Send";
     form.classList.toggle("is-streaming", isStreaming);
+    form.setAttribute("aria-busy", String(isStreaming));
   }
 
   input.addEventListener("input", resizeComposer);
@@ -128,6 +96,7 @@ if (form) {
     const status = document.querySelector("#stream-status");
     const message = input.value.trim();
     if (!message) return;
+
     input.value = "";
     resizeComposer();
     appendMessage("user", message);
@@ -168,6 +137,7 @@ if (form) {
           status.textContent = payload.message || "Stream failed.";
         } else if (eventName === "done") {
           status.textContent = "Done";
+          collapseReasoning(assistant.article);
         }
       });
     } catch {
@@ -184,7 +154,7 @@ if (newThread) {
   newThread.addEventListener("click", async () => {
     const response = await fetch("/api/chat/threads", {
       method: "POST",
-      headers: window.chatApp.jsonHeaders(),
+      headers: jsonHeaders(),
     });
     if (response.ok) {
       const payload = await response.json();

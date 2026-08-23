@@ -1,3 +1,5 @@
+import { jsonHeaders } from "./app.js";
+
 document.querySelectorAll(".memory-item").forEach((item) => {
   const id = item.dataset.memoryId;
   const approve = item.querySelector(".memory-approve");
@@ -6,7 +8,7 @@ document.querySelectorAll(".memory-item").forEach((item) => {
   async function send(action) {
     const response = await fetch(`/api/memories/${id}/${action}`, {
       method: "POST",
-      headers: window.chatApp.jsonHeaders(),
+      headers: jsonHeaders(),
     });
     if (response.ok) {
       window.location.reload();

@@ -11,6 +11,8 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    pip install -r requirements.txt
    ```
 
+   For a production-only installation, use `pip install .` instead.
+
 3. Copy `.env.example` to `.env` and set:
 
    ```text
@@ -22,6 +24,7 @@ A Flask chatbot app with email/password auth, Postgres persistence, LangGraph ch
    MEMORY_EMBEDDING_DIMENSIONS=1536
    CONVERSATION_HISTORY_LIMIT=24
    TOOL_MAX_CONCURRENCY=4
+   PLATFORM_ADMIN_EMAILS=admin@example.com
    ```
 
 4. Run migrations:
@@ -44,6 +47,24 @@ Each account has a customizable system prompt on the Settings page. It is stored
 dedicated `user_settings.system_prompt` Postgres column and starts with a general-purpose
 assistant prompt. The app adds its Markdown, tool, and memory instructions at runtime so users
 can customize the assistant's role, tone, and response style without disabling those features.
+
+## Tests
+
+Run the complete suite from the project root:
+
+```powershell
+python -m coverage run -m pytest
+python -m coverage report
+python -m ruff check .
+python -m black --check .
+```
+
+The tests exercise authentication and password migration, chat streaming and telemetry,
+short- and long-term memory, settings validation, reasoning workflows, public web URL
+safety, and multi-tenant MCP authorization. The code-quality tests also require every
+Python function, method, and class—including test helpers and migrations—to retain a
+docstring with basic Google-style summary and section formatting. The configured coverage
+check fails below 80% application statement coverage.
 
 ## Memory
 

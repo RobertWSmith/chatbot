@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator, Iterable
 from threading import Lock
 from typing import Any, TypedDict
 
-from flask import current_app
+from flask import current_app, has_app_context
 
 from app.extensions import db
 from app.models import (
@@ -46,6 +46,12 @@ def stream_agent_response(
             settings[key] = selected
     messages = _conversation_messages(user, thread, prompt)
     if not current_app.config.get("OPENAI_API_KEY"):
+        logger.info(
+            "event=agent.mode user_id=%s thread_id=%s mode=demo "
+            "tool_capable=false reason=missing_openai_api_key",
+            user.id,
+            thread.id,
+        )
         yield from _stream_demo_response(user, thread, prompt, settings, messages)
         return
 
@@ -66,8 +72,49 @@ def stream_agent_response(
 
 
 def _stream_langgraph_response(
-    user: User, thread: ChatThread, messages: list[dict[str, str]], settings: dict
+    user: User,
+    thread: ChatThread,
+    messages: list[dict[str, str]],
+    settings: dict,
+    tool_call_records: list[dict[str, Any]] | None = None,
 ) -> Generator[dict, None, None]:
+    """Bridge the asynchronous LangGraph stream into synchronous Flask code.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        messages: Model-ready conversation messages.
+        settings: Effective user settings.
+        tool_call_records: Sink for completed tool invocation records.
+
+    Yields:
+        Agent response events.
+    """
+    tool_call_records = [] if tool_call_records is None else tool_call_records
+    yield from _iterate_async_generator(
+        _astream_langgraph_response(user, thread, messages, settings, tool_call_records)
+    )
+
+
+async def _astream_langgraph_response(
+    user: User,
+    thread: ChatThread,
+    messages: list[dict[str, str]],
+    settings: dict,
+    tool_call_records: list[dict[str, Any]],
+) -> AsyncGenerator[dict, None]:
+    """Run the standard tool-capable LangGraph agent asynchronously.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        messages: Model-ready conversation messages.
+        settings: Effective user settings.
+        tool_call_records: Sink for completed tool invocation records.
+
+    Yields:
+        Normalized response events from LangGraph stream chunks.
+    """
     from langchain.agents import create_agent
     from langchain.messages import AIMessageChunk
 
@@ -83,6 +130,17 @@ def _stream_langgraph_response(
         store=None,
         system_prompt=_system_prompt(settings, mcp_result.loaded_namespaces),
     )
+    tool_call_logger = ToolCallLoggingCallback(
+        logger=logger,
+        user_id=user_id,
+        thread_id=str(thread.id),
+        log_arguments=(
+            bool(current_app.config.get("TOOL_CALL_LOG_ARGUMENTS")) if has_app_context() else False
+        ),
+        record_sink=tool_call_records,
+    )
+    last_reasoning_part: tuple[Any, ...] | None = None
+    reasoning_trailing_newlines = 0
 
     yield {"type": "status", "text": "Thinking"}
     for chunk in agent.stream(
@@ -102,6 +160,9 @@ def _stream_langgraph_response(
                     text = _reasoning_summary_text(block)
                     if text:
                         yield {"type": "reasoning_summary", "text": text}
+                        reasoning_trailing_newlines = len(text) - len(text.rstrip("\r\n"))
+                        if part_key is not None:
+                            last_reasoning_part = part_key
                 elif block["type"] == "text" and block.get("text"):
                     yield {"type": "token", "text": block["text"]}
         elif chunk["type"] == "updates":
@@ -572,6 +633,16 @@ def _conversation_messages(
 
 
 def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[Any]:
+    """Build memory tools scoped to the authenticated user and thread.
+
+    Args:
+        user: Authenticated user allowed to invoke the tools.
+        thread: Active chat thread used for memory provenance.
+        settings: Effective user settings controlling tool behavior.
+
+    Returns:
+        Memory recall and proposal tools.
+    """
     from langchain.tools import tool
 
     search_api = _build_web_search_api()
@@ -583,7 +654,14 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
 
     @tool
     def recall_user_memory(query: str) -> str:
-        """Retrieve approved long-term memories with vector similarity search."""
+        """Retrieve approved long-term memories with vector similarity search.
+
+        Args:
+            query: Natural-language memory search query.
+
+        Returns:
+            Formatted matching memories or a disabled message.
+        """
         if not settings.get("memory_enabled", True):
             return "Memory is disabled for this user."
         with memory_tool_lock:
@@ -594,7 +672,16 @@ def _build_agent_tools(user: User, thread: ChatThread, settings: dict) -> list[A
     def propose_memory(
         memory_text: str, category: str = "preference", confidence: float = 0.5
     ) -> str:
-        """Create a user-reviewable memory proposal. The user must approve it before saving."""
+        """Create a memory proposal that requires user approval before indexing.
+
+        Args:
+            memory_text: Stable preference or fact worth remembering.
+            category: Short classification for the proposed memory.
+            confidence: Confidence value clamped between zero and one.
+
+        Returns:
+            A proposal identifier or a settings-based disabled message.
+        """
         if not settings.get("memory_enabled", True):
             return "Memory is disabled for this user."
         if not settings.get("privacy", {}).get("allow_memory_proposals", True):
@@ -693,8 +780,20 @@ def _stream_demo_response(
     thread: ChatThread,
     prompt: str,
     settings: dict,
-    messages: list[dict[str, str]],
+    _messages: list[dict[str, str]],
 ) -> Generator[dict, None, None]:
+    """Stream a deterministic local response when no API key is configured.
+
+    Args:
+        user: Authenticated user requesting a response.
+        thread: Active chat thread.
+        prompt: Latest user prompt.
+        settings: Effective user settings.
+        _messages: Prepared messages, unused by deterministic demo mode.
+
+    Yields:
+        Demo status, reasoning-summary, token, and memory-proposal events.
+    """
     yield {
         "type": "status",
         "text": "Demo mode: set OPENAI_API_KEY to use LangGraph with OpenAI.",
@@ -702,7 +801,9 @@ def _stream_demo_response(
     if settings.get("reasoning_summaries_enabled"):
         yield {
             "type": "reasoning_summary",
-            "text": "No API key is configured, so this local demo response validates streaming only.",
+            "text": (
+                "No API key is configured, so this local demo response validates streaming only."
+            ),
         }
     previous_messages = messages[:-1]
     context_note = ""
@@ -718,25 +819,14 @@ def _stream_demo_response(
         )
     text = (
         "I am running in **local demo mode** because no OpenAI API key is configured.\n\n"
-        f"{context_note}"
-        "Your message was:\n\n"
-        f"> {prompt}\n\n"
         "Once `OPENAI_API_KEY` and Postgres are configured, this endpoint streams LangGraph "
         "messages, tool progress, reasoning summaries, and user-approved memory proposals."
     )
     for token in re.split(r"(\s+)", text):
         if token:
             yield {"type": "token", "text": token}
-    if settings.get("memory_enabled") and "remember" in prompt.lower():
-        proposal = PendingMemory(
-            user_id=user.id,
-            source_thread_id=thread.id,
-            memory_text=prompt[:4000],
-            category="user_request",
-            confidence=0.6,
-        )
-        db.session.add(proposal)
-        db.session.commit()
+    if _should_create_memory_proposal(prompt, settings):
+        proposal = _create_memory_proposal(user, thread, prompt, "user_request", 0.6)
         yield {
             "type": "memory_proposal",
             "id": proposal.id,
@@ -779,6 +869,7 @@ def _system_prompt(
         "same chat, answer from that context. "
         "Use propose_memory only for stable user preferences or facts worth remembering, "
         "and understand that the user must approve every proposed memory before it persists. "
+        f"{mcp_guidance} "
         f"User settings: compact_mode={settings.get('compact_mode')}, "
         f"font_size={settings.get('font_size')}."
     )

@@ -31,6 +31,7 @@ def settings_page():
 @bp.patch("/api/settings")
 @login_required
 def update_settings():
+    """Validate and persist a partial settings update."""
     patch = request.get_json(silent=True) or {}
     try:
         settings = validate_settings_update(current_user.settings.merged(), patch)

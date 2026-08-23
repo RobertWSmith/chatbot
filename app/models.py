@@ -23,10 +23,16 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def utcnow() -> datetime:
+    """Return the current timezone-aware UTC timestamp."""
     return datetime.now(UTC)
 
 
 def default_settings() -> dict:
+    """Build a fresh settings dictionary from the application defaults.
+
+    Returns:
+        A complete, independently mutable user-settings dictionary.
+    """
     return {
         "model_name": current_app.config.get("DEFAULT_MODEL", "gpt-5.5"),
         "reasoning_effort": current_app.config.get(
@@ -52,6 +58,8 @@ def default_settings() -> dict:
 
 
 class User(UserMixin, db.Model):
+    """Represent an authenticated application user."""
+
     __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -239,6 +247,8 @@ class GroupMCPNamespace(db.Model):
 
 
 class UserSettings(db.Model):
+    """Store per-user overrides for application settings."""
+
     __tablename__ = "user_settings"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -275,6 +285,8 @@ class UserSettings(db.Model):
 
 
 class ChatThread(db.Model):
+    """Represent one user-owned chat conversation."""
+
     __tablename__ = "chat_threads"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -312,9 +324,16 @@ class ChatThread(db.Model):
         back_populates="thread",
         cascade="all, delete-orphan",
     )
+    tool_call_telemetry = db.relationship(
+        "ToolCallTelemetry",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
 
 
 class ChatMessage(db.Model):
+    """Represent a user or assistant message in a chat thread."""
+
     __tablename__ = "chat_messages"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -339,6 +358,12 @@ class ChatMessage(db.Model):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    tool_calls = db.relationship(
+        "ToolCallTelemetry",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="ToolCallTelemetry.started_at",
+    )
     conversation_memories = db.relationship(
         "ConversationMemory",
         foreign_keys="ConversationMemory.source_message_id",
@@ -347,6 +372,8 @@ class ChatMessage(db.Model):
 
 
 class MessageTelemetry(db.Model):
+    """Capture lifecycle timing and token metrics for one chat message."""
+
     __tablename__ = "message_telemetry"
     __table_args__ = (
         db.Index(
@@ -390,7 +417,47 @@ class MessageTelemetry(db.Model):
     thread = db.relationship("ChatThread", back_populates="message_telemetry")
 
 
+class ToolCallTelemetry(db.Model):
+    """Record one privacy-conscious tool invocation for an assistant turn."""
+
+    __tablename__ = "tool_call_telemetry"
+    __table_args__ = (
+        db.Index("ix_tool_call_telemetry_thread_started", "thread_id", "started_at"),
+        db.Index("ix_tool_call_telemetry_message_started", "message_id", "started_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(
+        db.Integer,
+        db.ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    thread_id = db.Column(
+        db.String(36), db.ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id = db.Column(db.String(36), unique=True, nullable=False)
+    parent_run_id = db.Column(db.String(36), nullable=True)
+    tool_name = db.Column(db.String(255), nullable=False)
+    source = db.Column(db.String(255), nullable=False)
+    input_summary = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(32), nullable=False)
+    duration_ms = db.Column(db.Integer, nullable=True)
+    output_type = db.Column(db.String(120), nullable=True)
+    output_chars = db.Column(db.Integer, nullable=True)
+    error_type = db.Column(db.String(255), nullable=True)
+    started_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    message = db.relationship("ChatMessage", back_populates="tool_calls")
+    user = db.relationship("User", back_populates="tool_call_telemetry")
+    thread = db.relationship("ChatThread", back_populates="tool_call_telemetry")
+
+
 class ConversationMemorySnapshot(db.Model):
+    """Store a rolling summary of older messages in a chat thread."""
+
     __tablename__ = "conversation_memory_snapshots"
     __table_args__ = (
         db.Index(
@@ -432,6 +499,8 @@ class ConversationMemorySnapshot(db.Model):
 
 
 class ConversationMemory(db.Model):
+    """Store structured short-term memory extracted from a conversation."""
+
     __tablename__ = "conversation_memories"
     __table_args__ = (
         db.CheckConstraint(
@@ -504,6 +573,8 @@ class ConversationMemory(db.Model):
 
 
 class PendingMemory(db.Model):
+    """Represent a long-term memory proposal awaiting user review."""
+
     __tablename__ = "pending_memories"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -533,6 +604,8 @@ class PendingMemory(db.Model):
 
 
 class LongTermMemory(db.Model):
+    """Store an approved memory and its retrieval embedding."""
+
     __tablename__ = "long_term_memories"
     __table_args__ = (
         db.CheckConstraint(
