@@ -1,21 +1,44 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import secrets
 from datetime import UTC, timedelta
 from functools import wraps
-from urllib.parse import urlparse
 
-from flask import Blueprint, abort, current_app, jsonify, render_template, request
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    jsonify,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import Group, GroupMCPNamespace, GroupMembership, MCPNamespace
+from app.models import (
+    Group,
+    GroupInvitation,
+    GroupMCPNamespace,
+    GroupMembership,
+    MCPNamespace,
+    utcnow,
+)
 from app.services.mcp_access import accessible_mcp_namespaces, probe_mcp_namespace
+
+from .schemas import (
+    ErrorResponse,
+    MCPNamespaceCreate,
+    MCPNamespaceEnvelope,
+    MCPNamespaceListResponse,
+    MCPNamespaceResponse,
+)
 
 bp = Blueprint("tenancy", __name__)
 
@@ -23,10 +46,6 @@ PORTAL_CONTAINER_URL = "http://mcp-portal:8001/mcp"
 PORTAL_HOST_URL = "http://localhost:8001/mcp"
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
-_NAMESPACE_PATTERN = re.compile(r"^[a-z][a-z0-9]{1,30}$")
-_ENV_VAR_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-_ALLOWED_TRANSPORTS = {"http", "streamable_http", "sse"}
-_SECRET_HEADERS = {"authorization", "cookie", "proxy-authorization"}
 
 
 def platform_admin_required(view):
@@ -41,18 +60,17 @@ def platform_admin_required(view):
 
     @wraps(view)
     def wrapped(*args, **kwargs):
-        configured_admin = current_user.email.lower() in current_app.config.get(
-            "PLATFORM_ADMIN_EMAILS", ()
-        )
-        if configured_admin and not current_user.is_platform_admin:
+        """Authorize the request before invoking the protected view."""
+        if (
+            not current_user.is_platform_admin
+            and current_user.email.lower() in current_app.config.get("PLATFORM_ADMIN_EMAILS", ())
+        ):
             current_user.is_platform_admin = True
             db.session.commit()
         if not current_user.is_platform_admin:
             if request.path.startswith("/api/"):
-                return (
-                    jsonify({"error": "Platform administrator access is required."}),
-                    403,
-                )
+                response = ErrorResponse(error="Platform administrator access is required.")
+                return jsonify(response.model_dump(mode="json")), 403
             return render_template("errors/admin_forbidden.html"), 403
         return view(*args, **kwargs)
 
@@ -62,10 +80,13 @@ def platform_admin_required(view):
 @bp.get("/admin/mcp")
 @platform_admin_required
 def admin_mcp_page():
+    """Render the MCP namespace administration page."""
+    namespaces = MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all()
+    groups = Group.query.order_by(Group.name.asc(), Group.slug.asc()).all()
     return render_template(
         "admin/mcp.html",
-        namespaces=MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all(),
-        groups=Group.query.order_by(Group.name.asc()).all(),
+        namespaces=namespaces,
+        groups=groups,
         portal_container_url=PORTAL_CONTAINER_URL,
         portal_host_url=PORTAL_HOST_URL,
     )
@@ -74,66 +95,24 @@ def admin_mcp_page():
 @bp.get("/api/admin/mcp-namespaces")
 @platform_admin_required
 def list_mcp_namespaces():
-    items = MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all()
-    return jsonify({"mcp_namespaces": [_admin_namespace_json(item) for item in items]})
-
-
-@bp.post("/api/admin/mcp-namespaces")
-@platform_admin_required
-def create_mcp_namespace():
-    payload = request.get_json(silent=True) or {}
-    namespace = str(payload.get("namespace") or "").strip().lower()
-    display_name = str(payload.get("display_name") or namespace).strip()
-    description = str(payload.get("description") or "").strip()
-    transport = str(payload.get("transport") or "http").strip().lower()
-    url = str(payload.get("url") or "").strip()
-    auth_token_env_var = str(payload.get("auth_token_env_var") or "").strip() or None
-    headers = payload.get("headers") or {}
-
-    error = _validate_namespace_payload(
-        namespace,
-        display_name,
-        description,
-        transport,
-        url,
-        auth_token_env_var,
-        headers,
+    """Return every registered MCP namespace to an administrator."""
+    namespaces = MCPNamespace.query.order_by(MCPNamespace.display_name.asc()).all()
+    response = MCPNamespaceListResponse(
+        mcp_namespaces=[_admin_namespace_model(item) for item in namespaces]
     )
-    if error:
-        return jsonify({"error": error}), 400
-    if MCPNamespace.query.filter_by(namespace=namespace).first():
-        return jsonify({"error": "That MCP namespace already exists."}), 409
-
-    item = MCPNamespace(
-        namespace=namespace,
-        display_name=display_name,
-        description=description,
-        transport=transport,
-        url=url,
-        auth_token_env_var=auth_token_env_var,
-        headers=headers,
-    )
-    db.session.add(item)
-    try:
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"error": "That MCP namespace already exists."}), 409
-    return jsonify({"mcp_namespace": _admin_namespace_json(item)}), 201
+    return jsonify(response.model_dump(mode="json"))
 
 
 @bp.post("/api/admin/mcp-portal/bootstrap")
 @platform_admin_required
 def bootstrap_local_mcp_portal():
-    """Register the Compose portal and grant it to the signed-in administrator."""
+    """Configure the local Compose portal and grant it to the administrator."""
     item = MCPNamespace.query.filter_by(namespace="portal").first()
     if item is None:
         item = MCPNamespace(namespace="portal")
         db.session.add(item)
     item.display_name = "MCP Portal"
-    item.description = (
-        "Local Compose MCP portal with public web search and link resolution."
-    )
+    item.description = "Local Compose MCP portal with public web research tools."
     item.transport = "streamable_http"
     item.url = PORTAL_CONTAINER_URL
     item.auth_token_env_var = None
@@ -148,26 +127,19 @@ def bootstrap_local_mcp_portal():
     )
     group = owner_membership.group if owner_membership is not None else None
     if group is None:
-        group_slug = f"mcp-portal-{current_user.id}"
         group = Group(
             name="My MCP Portal access",
-            slug=group_slug,
+            slug=f"mcp-portal-{current_user.id}",
             created_by_user_id=current_user.id,
         )
         db.session.add(group)
         db.session.flush()
 
-    membership = GroupMembership.query.filter_by(
-        group_id=group.id, user_id=current_user.id
-    ).first()
+    membership = GroupMembership.query.filter_by(group_id=group.id, user_id=current_user.id).first()
     if membership is None:
-        db.session.add(
-            GroupMembership(group_id=group.id, user_id=current_user.id, role="owner")
-        )
+        db.session.add(GroupMembership(group_id=group.id, user_id=current_user.id, role="owner"))
 
-    grant = GroupMCPNamespace.query.filter_by(
-        group_id=group.id, mcp_namespace_id=item.id
-    ).first()
+    grant = GroupMCPNamespace.query.filter_by(group_id=group.id, mcp_namespace_id=item.id).first()
     if grant is None:
         db.session.add(GroupMCPNamespace(group_id=group.id, mcp_namespace_id=item.id))
 
@@ -178,10 +150,7 @@ def bootstrap_local_mcp_portal():
     }
     duplicates = MCPNamespace.query.filter(MCPNamespace.id != item.id).all()
     for duplicate in duplicates:
-        if (
-            not duplicate.namespace.startswith("portal")
-            or duplicate.url not in legacy_urls
-        ):
+        if not duplicate.namespace.startswith("portal") or duplicate.url not in legacy_urls:
             continue
         for duplicate_grant in duplicate.group_grants:
             existing_grant = GroupMCPNamespace.query.filter_by(
@@ -196,10 +165,12 @@ def bootstrap_local_mcp_portal():
                     )
                 )
         duplicate.enabled = False
+
     db.session.commit()
+    response = MCPNamespaceEnvelope(mcp_namespace=_admin_namespace_model(item))
     return jsonify(
         {
-            "mcp_namespace": _admin_namespace_json(item),
+            **response.model_dump(mode="json"),
             "group": {"id": group.id, "name": group.name, "slug": group.slug},
         }
     )
@@ -208,6 +179,11 @@ def bootstrap_local_mcp_portal():
 @bp.post("/api/admin/mcp-namespaces/<namespace>/test")
 @platform_admin_required
 def test_mcp_namespace(namespace: str):
+    """Probe one registered namespace and return its advertised tool names.
+
+    Args:
+        namespace: Registered namespace to probe.
+    """
     item = MCPNamespace.query.filter_by(namespace=namespace.lower()).first_or_404()
     try:
         tools = asyncio.run(probe_mcp_namespace(item))
@@ -224,8 +200,36 @@ def test_mcp_namespace(namespace: str):
             ),
             502,
         )
+    return jsonify({"namespace": item.namespace, "tools": tools, "tool_count": len(tools)})
+
+
+@bp.get("/api/groups")
+@login_required
+def list_groups():
+    """Return the current user's groups and namespace grants."""
+    memberships = (
+        GroupMembership.query.filter_by(user_id=current_user.id)
+        .join(Group)
+        .order_by(Group.name.asc())
+        .all()
+    )
     return jsonify(
-        {"namespace": item.namespace, "tools": tools, "tool_count": len(tools)}
+        {
+            "groups": [
+                {
+                    "id": membership.group.id,
+                    "name": membership.group.name,
+                    "slug": membership.group.slug,
+                    "role": membership.role,
+                    "mcp_namespaces": sorted(
+                        grant.mcp_namespace.namespace
+                        for grant in membership.group.namespace_grants
+                        if grant.mcp_namespace.enabled
+                    ),
+                }
+                for membership in memberships
+            ]
+        }
     )
 
 
@@ -237,17 +241,10 @@ def create_group():
     name = str(payload.get("name") or "").strip()
     slug = str(payload.get("slug") or _slugify(name)).strip().lower()
     if not name or len(name) > 120:
-        return (
-            jsonify({"error": "Group name must be between 1 and 120 characters."}),
-            400,
-        )
+        return jsonify({"error": "Group name must be between 1 and 120 characters."}), 400
     if not _SLUG_PATTERN.fullmatch(slug):
         return (
-            jsonify(
-                {
-                    "error": "Group slug must contain lowercase letters, numbers, or hyphens."
-                }
-            ),
+            jsonify({"error": "Group slug must contain lowercase letters, numbers, or hyphens."}),
             400,
         )
     if Group.query.filter_by(slug=slug).first():
@@ -299,7 +296,19 @@ def create_group_invitation(group_id: str):
     db.session.add(invitation)
     db.session.commit()
     return (
-        jsonify({"group": {"id": group.id, "name": group.name, "slug": group.slug}}),
+        jsonify(
+            {
+                "invitation": {
+                    "id": invitation.id,
+                    "group_id": invitation.group_id,
+                    "email": invitation.email,
+                    "role": invitation.role,
+                    "expires_at": invitation.expires_at.isoformat(),
+                    "token": token,
+                    "join_url": url_for("tenancy.join_group", _external=True),
+                }
+            }
+        ),
         201,
     )
 
@@ -468,7 +477,8 @@ def grant_group_mcp_namespace(group_id: str, namespace: str):
     if group is None or item is None:
         abort(404)
     grant = GroupMCPNamespace.query.filter_by(
-        group_id=group.id, mcp_namespace_id=item.id
+        group_id=group.id,
+        mcp_namespace_id=item.id,
     ).first()
     if grant is None:
         db.session.add(GroupMCPNamespace(group_id=group.id, mcp_namespace_id=item.id))
@@ -492,7 +502,8 @@ def revoke_group_mcp_namespace(group_id: str, namespace: str):
     if item is None:
         abort(404)
     grant = GroupMCPNamespace.query.filter_by(
-        group_id=group_id, mcp_namespace_id=item.id
+        group_id=group_id,
+        mcp_namespace_id=item.id,
     ).first()
     if grant is None:
         abort(404)
@@ -501,22 +512,20 @@ def revoke_group_mcp_namespace(group_id: str, namespace: str):
     return "", 204
 
 
-@bp.get("/api/me/mcp-namespaces")
-@login_required
-def list_my_mcp_namespaces():
-    items = accessible_mcp_namespaces(current_user.id)
-    return jsonify(
-        {
-            "mcp_namespaces": [
-                {
-                    "namespace": item.namespace,
-                    "display_name": item.display_name,
-                    "description": item.description,
-                }
-                for item in items
-            ]
-        }
-    )
+def _owner_membership_or_404(group_id: str) -> GroupMembership:
+    """Load the current user's owner membership or abort.
+
+    Args:
+        group_id: Group that must be owned.
+
+    Returns:
+        The current user's owner membership.
+    """
+    membership = _group_membership_or_404(group_id)
+    if membership.role != "owner":
+        abort(403)
+    return membership
+
 
 def _group_membership_or_404(group_id: str) -> GroupMembership:
     """Load the current user's membership in a group or raise a 404.
@@ -532,37 +541,6 @@ def _group_membership_or_404(group_id: str) -> GroupMembership:
         user_id=current_user.id,
     ).first_or_404()
 
-def _validate_namespace_payload(
-    namespace: str,
-    display_name: str,
-    description: str,
-    transport: str,
-    url: str,
-    auth_token_env_var: str | None,
-    headers: object,
-) -> str | None:
-    if not _NAMESPACE_PATTERN.fullmatch(namespace):
-        return "Namespace must be 2-31 lowercase letters or numbers and start with a letter."
-    if not display_name or len(display_name) > 120:
-        return "Display name must be between 1 and 120 characters."
-    if len(description) > 2000:
-        return "Description must be no more than 2000 characters."
-    if transport not in _ALLOWED_TRANSPORTS:
-        return "Transport must be http, streamable_http, or sse."
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return "MCP URL must be an absolute HTTP or HTTPS URL."
-    if auth_token_env_var and not _ENV_VAR_PATTERN.fullmatch(auth_token_env_var):
-        return "auth_token_env_var must be a valid uppercase environment variable name."
-    if not isinstance(headers, dict) or any(
-        not isinstance(key, str) or not isinstance(value, str)
-        for key, value in headers.items()
-    ):
-        return "Headers must be an object containing string values."
-    if any(key.lower() in _SECRET_HEADERS for key in headers):
-        return "Secret authentication headers must use auth_token_env_var."
-    return None
-
 
 def _slugify(value: str) -> str:
     """Convert a group name into a bounded URL-safe slug.
@@ -576,15 +554,65 @@ def _slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")[:80]
 
 
-def _admin_namespace_json(item: MCPNamespace) -> dict:
-    return {
-        "namespace": item.namespace,
-        "display_name": item.display_name,
-        "description": item.description,
-        "transport": item.transport,
-        "url": item.url,
-        "auth_token_env_var": item.auth_token_env_var,
-        "headers": item.headers,
-        "enabled": item.enabled,
-        "group_grant_count": len(item.group_grants),
-    }
+def _hash_token(token: str) -> str:
+    """Hash an invitation token for safe persistence.
+
+    Args:
+        token: Plain-text bearer token returned to the inviter.
+
+    Returns:
+        Hex-encoded SHA-256 digest.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _is_expired(expires_at) -> bool:
+    """Compare an invitation expiration timestamp with current UTC time.
+
+    Args:
+        expires_at: Naive or timezone-aware expiration timestamp.
+
+    Returns:
+        Whether the timestamp has passed.
+    """
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at <= utcnow()
+
+
+def _admin_namespace_model(item: MCPNamespace) -> MCPNamespaceResponse:
+    """Serialize a persisted namespace for the administrator API.
+
+    Args:
+        item: Namespace database model.
+
+    Returns:
+        Validated response model with grant count.
+    """
+    return MCPNamespaceResponse(
+        namespace=item.namespace,
+        display_name=item.display_name,
+        description=item.description,
+        transport=item.transport,
+        url=item.url,
+        auth_token_env_var=item.auth_token_env_var,
+        headers=item.headers,
+        enabled=item.enabled,
+        group_grant_count=len(item.group_grants),
+        created_at=item.created_at,
+    )
+
+
+def _pydantic_error_message(exc: ValidationError) -> str:
+    """Flatten the first Pydantic error for a concise API response.
+
+    Args:
+        exc: Pydantic validation exception.
+
+    Returns:
+        Field-qualified validation message.
+    """
+    error = exc.errors(include_url=False)[0]
+    location = ".".join(str(part) for part in error["loc"])
+    message = str(error["msg"])
+    return f"{location}: {message}" if location else message

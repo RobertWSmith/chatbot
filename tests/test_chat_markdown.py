@@ -4,6 +4,7 @@ from .conftest import register
 
 
 def test_chat_page_loads_math_renderer(client):
+    """Ensure the chat page loads the KaTeX Markdown integration."""
     register(client)
     page = client.get("/chat")
 
@@ -14,6 +15,7 @@ def test_chat_page_loads_math_renderer(client):
 
 
 def test_system_prompt_requests_supported_math_delimiters():
+    """Ensure model instructions match the delimiters rendered by the browser."""
     prompt = _system_prompt({})
 
     assert "inline math as `$...$`" in prompt

@@ -1,57 +1,12 @@
-const md = window.markdownit({
-  html: false,
-  linkify: true,
-  typographer: true,
-  highlight: (str, lang) => {
-    if (lang && window.hljs && hljs.getLanguage(lang)) {
-      try {
-        return hljs.highlight(str, { language: lang }).value;
-      } catch {
-        return "";
-      }
-    }
-    return "";
-  },
-});
-
-if (window.markdownitTaskLists) {
-  md.use(window.markdownitTaskLists);
-}
-
-if (window.texmath && window.katex) {
-  md.use(window.texmath, {
-    engine: window.katex,
-    delimiters: ["dollars", "brackets"],
-    katexOptions: {
-      throwOnError: false,
-    },
-  });
-}
-
-function renderMarkdown(target, source) {
-  const balanced = balanceMarkdown(source);
-  const dirty = md.render(balanced);
-  target.innerHTML = DOMPurify.sanitize(dirty);
-  target.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
-}
-
-function balanceMarkdown(source) {
-  const fenceCount = (source.match(/```/g) || []).length;
-  return fenceCount % 2 === 1 ? `${source}\n\`\`\`` : source;
-}
-
-function appendMessage(role, text = "") {
-  const article = document.createElement("article");
-  article.className = `message ${role}`;
-  const label = role === "user" ? "You" : "Assistant";
-  article.innerHTML = `<div class="message-role">${label}</div><div class="markdown"></div>`;
-  const markdown = article.querySelector(".markdown");
-  markdown.dataset.source = text;
-  renderMarkdown(markdown, text);
-  document.querySelector("#messages").append(article);
-  article.scrollIntoView({ block: "end" });
-  return { article, markdown };
-}
+import { jsonHeaders } from "./app.js";
+import {
+  appendMessage,
+  collapseReasoning,
+  ensureReasoning,
+  renderExistingMarkdown,
+  renderMarkdown,
+} from "./chat-rendering.js";
+import { readSse } from "./chat-stream.js";
 
 renderExistingMarkdown();
 
@@ -59,9 +14,9 @@ const form = document.querySelector("#chat-form");
 if (form) {
   const input = document.querySelector("#message-input");
   const submitButton = form.querySelector("button[type='submit']");
-  const reasoningProviderSelect = document.querySelector("#reasoning-provider-select");
   const modelSelect = document.querySelector("#model-select");
   const reasoningSelect = document.querySelector("#reasoning-select");
+  const reasoningProviderSelect = document.querySelector("#reasoning-provider-select");
 
   function resizeComposer() {
     input.style.height = "auto";
@@ -71,9 +26,9 @@ if (form) {
   function setStreaming(isStreaming) {
     input.disabled = isStreaming;
     submitButton.disabled = isStreaming;
-    reasoningProviderSelect.disabled = isStreaming;
     modelSelect.disabled = isStreaming;
     reasoningSelect.disabled = isStreaming;
+    reasoningProviderSelect.disabled = isStreaming;
     submitButton.textContent = isStreaming ? "Sending" : "Send";
     form.classList.toggle("is-streaming", isStreaming);
     form.setAttribute("aria-busy", String(isStreaming));
@@ -109,12 +64,12 @@ if (form) {
     try {
       const response = await fetch(`/api/chat/threads/${pane.dataset.threadId}/messages`, {
         method: "POST",
-        headers: window.chatApp.jsonHeaders(),
+        headers: jsonHeaders(),
         body: JSON.stringify({
           message,
-          reasoning_provider: reasoningProviderSelect.value,
           model_name: modelSelect.value,
           reasoning_effort: reasoningSelect.value,
+          reasoning_provider: reasoningProviderSelect.value,
         }),
       });
       if (!response.ok) {

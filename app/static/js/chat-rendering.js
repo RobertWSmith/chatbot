@@ -18,6 +18,14 @@ if (window.markdownitTaskLists) {
   markdown.use(window.markdownitTaskLists);
 }
 
+if (window.texmath && window.katex) {
+  markdown.use(window.texmath, {
+    engine: window.katex,
+    delimiters: ["dollars", "brackets"],
+    katexOptions: { throwOnError: false },
+  });
+}
+
 function splitFusedHeadings(line) {
   const parts = [];
   let partStart = 0;

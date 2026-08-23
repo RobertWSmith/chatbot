@@ -13,7 +13,7 @@ from sqlalchemy import exists, select
 from app.extensions import db
 from app.models import GroupMCPNamespace, GroupMembership, MCPNamespace
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class MCPConfigurationError(RuntimeError):
@@ -30,7 +30,14 @@ class MCPToolLoadResult:
 
 
 def accessible_mcp_namespaces(user_id: int) -> list[MCPNamespace]:
-    """Return enabled MCP namespaces granted through any of a user's groups."""
+    """Return enabled MCP namespaces granted by all of a user's groups.
+
+    Args:
+        user_id: User whose effective grants should be resolved.
+
+    Returns:
+        Deduplicated namespaces ordered by namespace name.
+    """
     return list(db.session.scalars(_accessible_mcp_namespaces_statement(user_id)).all())
 
 
@@ -56,16 +63,39 @@ def _accessible_mcp_namespaces_statement(user_id: int):
     )
     return (
         select(MCPNamespace)
-        .where(MCPNamespace.enabled.is_(True), grant_exists)
+        .where(
+            MCPNamespace.enabled.is_(True),
+            grant_exists,
+        )
         .order_by(MCPNamespace.namespace.asc())
     )
 
 
 async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
-    """Load a user's MCP tools while isolating individual namespace failures."""
+    """Load tools from every MCP namespace authorized for a user.
+
+    Namespace failures are isolated so one unavailable server does not hide
+    tools loaded successfully from another server.
+
+    Args:
+        user_id: User whose authorized tools should be loaded.
+
+    Returns:
+        Loaded tools and successful or unavailable namespace names.
+    """
     namespaces = accessible_mcp_namespaces(user_id)
     if not namespaces:
+        logger.info(
+            "event=mcp.discovery.skipped user_id=%s reason=no_authorized_namespaces",
+            user_id,
+        )
         return MCPToolLoadResult([], (), ())
+
+    logger.info(
+        "event=mcp.discovery.start user_id=%s namespaces=%s",
+        user_id,
+        ",".join(item.namespace for item in namespaces),
+    )
 
     results = await asyncio.gather(
         *(_load_namespace_tools(item) for item in namespaces),
@@ -78,14 +108,14 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
 
     for item, result in zip(namespaces, results, strict=True):
         if isinstance(result, BaseException):
-            LOGGER.warning(
-                "MCP namespace %s could not be loaded: %s",
+            logger.warning(
+                "event=mcp.namespace.error user_id=%s namespace=%s error_type=%s",
+                user_id,
                 item.namespace,
                 type(result).__name__,
             )
             unavailable.append(item.namespace)
             continue
-
         loaded.append(item.namespace)
         for tool in result:
             tool.name = _unique_tool_name(tool.name, used_tool_names)
@@ -100,8 +130,10 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
             }
             tools.append(tool)
 
-    LOGGER.info(
-        "Loaded MCP namespaces=%s unavailable=%s tools=%s",
+    logger.info(
+        "event=mcp.discovery.complete user_id=%s loaded_namespaces=%s "
+        "unavailable_namespaces=%s tools=%s",
+        user_id,
         ",".join(loaded) or "none",
         ",".join(unavailable) or "none",
         ",".join(tool.name for tool in tools) or "none",
@@ -110,7 +142,14 @@ async def load_authorized_mcp_tools(user_id: int) -> MCPToolLoadResult:
 
 
 async def probe_mcp_namespace(item: MCPNamespace) -> list[str]:
-    """Return the tool names advertised by one namespace."""
+    """Return the tool names advertised by one namespace.
+
+    Args:
+        item: Persisted namespace to inspect.
+
+    Returns:
+        Collision-safe tool names exposed by the remote server.
+    """
     return [tool.name for tool in await _load_namespace_tools(item)]
 
 
@@ -130,7 +169,22 @@ async def _load_namespace_tools(item: MCPNamespace) -> list[Any]:
         {server_name: _connection_config(item)},
         tool_name_prefix=True,
     )
-    return await client.get_tools(server_name=server_name)
+    parsed = urlparse(item.url)
+    endpoint = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    logger.info(
+        "event=mcp.namespace.connect namespace=%s transport=%s endpoint=%s",
+        item.namespace,
+        item.transport,
+        endpoint,
+    )
+    tools = await client.get_tools(server_name=server_name)
+    logger.info(
+        "event=mcp.namespace.tools_loaded namespace=%s tool_count=%s tools=%s",
+        item.namespace,
+        len(tools),
+        ",".join(tool.name for tool in tools) or "none",
+    )
+    return tools
 
 
 def _connection_config(item: MCPNamespace) -> dict[str, Any]:
@@ -150,14 +204,11 @@ def _connection_config(item: MCPNamespace) -> dict[str, Any]:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise MCPConfigurationError("MCP URL is invalid.")
     if item.transport not in {"http", "streamable_http", "sse"}:
-        raise MCPConfigurationError(
-            "MCP transport is not supported by the web application."
-        )
+        raise MCPConfigurationError("MCP transport is not supported by the web application.")
 
     raw_headers = item.headers or {}
     if not isinstance(raw_headers, dict) or any(
-        not isinstance(key, str) or not isinstance(value, str)
-        for key, value in raw_headers.items()
+        not isinstance(key, str) or not isinstance(value, str) for key, value in raw_headers.items()
     ):
         raise MCPConfigurationError("MCP headers are invalid.")
     headers = dict(raw_headers)
@@ -167,7 +218,10 @@ def _connection_config(item: MCPNamespace) -> dict[str, Any]:
             raise MCPConfigurationError("MCP bearer token is not configured.")
         headers["Authorization"] = f"Bearer {token}"
 
-    config: dict[str, Any] = {"transport": item.transport, "url": item.url}
+    config: dict[str, Any] = {
+        "transport": item.transport,
+        "url": item.url,
+    }
     if headers:
         config["headers"] = headers
     return config

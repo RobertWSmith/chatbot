@@ -51,14 +51,6 @@
       <textarea id="message-input" name="message" rows="2" placeholder="Ask anything..." required></textarea>
       <div class="composer-toolbar">
         <div class="generation-controls" aria-label="Response settings">
-          <label class="generation-control" title="Reasoning provider for this chat">
-            <span>Provider</span>
-            <select id="reasoning-provider-select" name="reasoning_provider" aria-label="Reasoning provider for this chat">
-              {% for value, label in reasoning_provider_options %}
-                <option value="{{ value }}" {% if chat_settings.reasoning_provider == value %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </label>
           <label class="generation-control" title="Model for this chat">
             <span>Model</span>
             <select id="model-select" name="model_name" aria-label="Model for this chat">
@@ -67,11 +59,19 @@
               {% endfor %}
             </select>
           </label>
-          <label class="generation-control" title="Reasoning effort for this chat">
-            <span>Effort</span>
-            <select id="reasoning-select" name="reasoning_effort" aria-label="Reasoning effort for this chat">
+          <label class="generation-control" title="Reasoning level for this chat">
+            <span>Reasoning</span>
+            <select id="reasoning-select" name="reasoning_effort" aria-label="Reasoning level for this chat">
               {% for effort in reasoning_options %}
                 <option value="{{ effort }}" {% if chat_settings.reasoning_effort == effort %}selected{% endif %}>{{ effort }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="generation-control" title="Reasoning provider for this chat">
+            <span>Provider</span>
+            <select id="reasoning-provider-select" name="reasoning_provider" aria-label="Reasoning provider for this chat">
+              {% for value, label in reasoning_provider_options %}
+                <option value="{{ value }}" {% if chat_settings.reasoning_provider == value %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
           </label>

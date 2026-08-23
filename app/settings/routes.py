@@ -18,6 +18,7 @@ bp = Blueprint("settings", __name__)
 @bp.get("/settings")
 @login_required
 def settings_page():
+    """Render the current user's effective settings."""
     return render_template(
         "settings.html",
         settings=current_user.settings.merged(),

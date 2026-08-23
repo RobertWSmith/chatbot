@@ -1,17 +1,21 @@
-FROM python:3.14-slim AS runtime
+ARG PYTHON_BASE_IMAGE=python:3.14-slim
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY --from=portal /pyproject.toml /README.md ./
-COPY --from=portal /src ./src
+RUN python -m venv /opt/mcp-portal
+ENV PATH="/opt/mcp-portal/bin:${PATH}"
 
-RUN python -m pip install --upgrade pip \
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install .
 
 EXPOSE 8001
 
-CMD ["python", "-m", "mcp_portal", "--production", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8001", "--path", "/mcp", "--no-banner"]
+CMD ["mcp-portal", "--production", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8001", "--path", "/mcp", "--no-banner"]

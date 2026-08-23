@@ -1,111 +1,275 @@
 {% extends "base.html" %}
 {% block title %}MCP servers · Admin{% endblock %}
 {% block content %}
-{% set grant_count = namespaces | map(attribute='group_grants') | map('length') | sum %}
+{% set enabled_count = namespaces | selectattr("enabled") | list | length %}
+{% set secured_count = namespaces | selectattr("auth_token_env_var") | list | length %}
+{% set grant_count = namespaces | map(attribute="group_grants") | map("length") | sum %}
 <section class="admin-mcp-page">
-  <header class="admin-mcp-header">
+  <header class="admin-mcp-hero">
     <div>
-      <p class="admin-eyebrow">Platform administration · <code>/admin/mcp</code></p>
+      <p class="admin-eyebrow">Platform administration</p>
       <h1>MCP servers</h1>
-      <p>Connect remote tool providers and grant their tools to chatbot users through groups.</p>
+      <p>Connect remote tool providers once, then make them available to the right groups.</p>
     </div>
+    <a class="primary admin-add-link" href="#add-mcp-server" data-focus-target="display_name">
+      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></svg>
+      Add server
+    </a>
   </header>
 
-  <section class="portal-quickstart" aria-labelledby="portal-quickstart-title">
-    <div>
-      <p class="admin-eyebrow">Docker Compose quick setup</p>
-      <h2 id="portal-quickstart-title">Connect the local MCP Portal</h2>
-      <p>This registers the portal, creates your personal access group, and grants the namespace in one step.</p>
-      <dl class="endpoint-grid">
-        <div><dt>Chatbot container uses</dt><dd><code>{{ portal_container_url }}</code></dd></div>
-        <div><dt>Browser or host uses</dt><dd><code>{{ portal_host_url }}</code></dd></div>
-        <div><dt>Transport</dt><dd><code>streamable_http</code></dd></div>
-      </dl>
-      <p class="endpoint-warning"><strong>Do not save localhost in the admin form.</strong> Inside Docker, localhost points back to the chatbot container.</p>
+  <section class="admin-panel p-5" aria-labelledby="portal-quickstart-title">
+    <header class="admin-panel-header">
+      <div>
+        <p class="admin-eyebrow">Local quick setup</p>
+        <h2 id="portal-quickstart-title">Connect the local MCP Portal</h2>
+        <p>Configure the Compose endpoint, create an access group, and grant it to your account.</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button id="bootstrap-portal" class="primary" type="button">Configure portal for me</button>
+        <button class="secondary" type="button" data-test-namespace="portal">Test portal tools</button>
+      </div>
+    </header>
+    <div class="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
+      <span>Chatbot container: <code>{{ portal_container_url }}</code></span>
+      <span>Windows host: <code>{{ portal_host_url }}</code></span>
     </div>
-    <div class="quickstart-actions">
-      <button id="bootstrap-portal" class="primary" type="button">Configure portal for me</button>
-      <button class="secondary" type="button" data-test-namespace="portal">Test portal tools</button>
-      <p id="portal-bootstrap-status" class="stream-status" aria-live="polite"></p>
-    </div>
+    <p id="portal-bootstrap-status" class="admin-form-status" role="status" aria-live="polite"></p>
   </section>
 
-  <div class="admin-mcp-grid">
-    <section class="admin-mcp-panel">
-      <header><h2>Server inventory</h2><span class="pill">{{ namespaces | length }} servers · {{ grant_count }} grants</span></header>
-      <div class="mcp-server-list">
-        {% for item in namespaces %}
-          <article class="mcp-server-row">
-            <div>
-              <h3>{{ item.display_name }}</h3>
-              <code>mcp_{{ item.namespace }}</code>
-              <p>{{ item.description or 'No description provided.' }}</p>
-              <small>{{ item.transport }} · {{ item.url }}</small>
-            </div>
-            <div>
-              <span class="pill {{ 'approved' if item.enabled else '' }}">{{ 'Enabled' if item.enabled else 'Disabled' }}</span>
-              <button class="secondary" type="button" data-test-namespace="{{ item.namespace }}">Test tools</button>
-            </div>
-          </article>
-        {% else %}
-          <p>No MCP servers are registered. Use the quick setup or add one manually.</p>
-        {% endfor %}
-      </div>
-      <p id="mcp-test-status" class="stream-status" aria-live="polite"></p>
-    </section>
-
-    <section class="admin-mcp-panel">
-      <h2>Add another MCP server</h2>
-      <form id="mcp-server-form" class="stack">
-        <label>Display name<input name="display_name" maxlength="120" required placeholder="Billing tools"></label>
-        <label>Namespace<input name="namespace" maxlength="31" required pattern="[a-z][a-z0-9]{1,30}" placeholder="billing"></label>
-        <label>Server URL<input name="url" type="url" required placeholder="https://mcp.example.com/mcp"></label>
-        <label>Transport
-          <select name="transport">
-            <option value="streamable_http">Streamable HTTP</option>
-            <option value="http">HTTP</option>
-            <option value="sse">SSE</option>
-          </select>
-        </label>
-        <label>Description<textarea name="description" rows="2"></textarea></label>
-        <label>Bearer token environment variable<input name="auth_token_env_var" placeholder="BILLING_MCP_TOKEN"></label>
-        <label>Non-secret headers (JSON)<textarea name="headers" rows="2" placeholder='{"X-Client":"chatbot"}'></textarea></label>
-        <button class="primary" type="submit">Add server</button>
-        <p id="mcp-form-status" class="stream-status" aria-live="polite"></p>
-      </form>
-    </section>
+  <div class="admin-mcp-stats" aria-label="MCP server summary">
+    <article class="admin-stat-card">
+      <span class="admin-stat-icon blue" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01"/></svg>
+      </span>
+      <span><strong id="mcp-total-count">{{ namespaces | length }}</strong><small>Total servers</small></span>
+    </article>
+    <article class="admin-stat-card">
+      <span class="admin-stat-icon green" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/><circle cx="12" cy="12" r="9"/></svg>
+      </span>
+      <span><strong id="mcp-enabled-count">{{ enabled_count }}</strong><small>Enabled</small></span>
+    </article>
+    <article class="admin-stat-card">
+      <span class="admin-stat-icon violet" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      </span>
+      <span><strong id="mcp-secured-count">{{ secured_count }}</strong><small>Using token auth</small></span>
+    </article>
+    <article class="admin-stat-card">
+      <span class="admin-stat-icon amber" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2"/><path d="M3 20a6 6 0 0 1 12 0M14 16a5 5 0 0 1 7 4"/></svg>
+      </span>
+      <span><strong id="mcp-grant-count">{{ grant_count }}</strong><small>Group grants</small></span>
+    </article>
   </div>
 
-  <section class="admin-mcp-panel">
-    <header><h2>Group access</h2><p>A server is not visible to a chatbot user until one of their groups has a grant.</p></header>
-    <div class="grant-controls">
-      <form id="mcp-group-form" class="inline-form">
-        <input name="name" required maxlength="120" placeholder="Personal workspace">
-        <button class="secondary" type="submit">Create group</button>
-      </form>
-      <form id="mcp-grant-form" class="inline-form">
-        <select name="namespace" required>
-          <option value="">Select server</option>
-          {% for item in namespaces %}<option value="{{ item.namespace }}">{{ item.display_name }}</option>{% endfor %}
-        </select>
-        <select name="group_id" required>
-          <option value="">Select group</option>
-          {% for group in groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}
-        </select>
-        <button class="primary" type="submit">Grant access</button>
-      </form>
+  <section class="admin-panel admin-grant-panel" aria-labelledby="mcp-grant-title">
+    <header class="admin-panel-header">
+      <div>
+        <p class="admin-eyebrow">Authorization</p>
+        <h2 id="mcp-grant-title">Group access</h2>
+        <p>Choose which tenant groups can expose each server's tools to their members.</p>
+      </div>
+      <span class="admin-grant-total"><strong>{{ grant_count }}</strong> active</span>
+    </header>
+
+    <div class="admin-grant-body">
+      <div class="admin-grant-controls">
+        <form id="mcp-grant-form" class="admin-grant-form">
+          <label>MCP server
+            <select name="namespace" required {% if not namespaces %}disabled{% endif %}>
+              <option value="">Select a server</option>
+              {% for item in namespaces %}
+                <option value="{{ item.namespace }}">{{ item.display_name }} · mcp_{{ item.namespace }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Tenant group
+            <select name="group_id" required {% if not groups %}disabled{% endif %}>
+              <option value="">Select a group</option>
+              {% for group in groups %}
+                <option value="{{ group.id }}">{{ group.name }} · {{ group.slug }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="primary" type="submit" {% if not namespaces or not groups %}disabled{% endif %}>
+            Grant access
+          </button>
+          {% if not groups %}
+            <p id="mcp-grant-help" class="admin-grant-help">No tenant groups exist yet. Create one below, then assign server access.</p>
+          {% elif not namespaces %}
+            <p id="mcp-grant-help" class="admin-grant-help">Register an MCP server before assigning group access.</p>
+          {% else %}
+            <p id="mcp-grant-help" class="admin-grant-help">Access is recalculated on the group's next chat message; no restart is needed.</p>
+          {% endif %}
+          <p id="mcp-grant-status" class="admin-form-status" role="status" aria-live="polite"></p>
+        </form>
+
+        <form id="mcp-group-form" class="admin-group-form">
+          <div>
+            <strong>Create tenant group</strong>
+            <span>The signed-in administrator becomes its owner.</span>
+          </div>
+          <label class="sr-only" for="mcp-group-name">Tenant group name</label>
+          <input id="mcp-group-name" name="name" maxlength="120" placeholder="e.g. Personal workspace" required>
+          <button class="secondary" type="submit">Create group</button>
+          <p id="mcp-group-status" class="admin-form-status" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+
+      <div class="admin-grant-current" aria-labelledby="mcp-current-grants-title">
+        <div class="admin-grant-current-heading">
+          <h3 id="mcp-current-grants-title">Current grants</h3>
+          <span>{{ grant_count }}</span>
+        </div>
+        <div id="mcp-grant-list" class="admin-grant-list">
+          {% for item in namespaces %}
+            {% for grant in item.group_grants %}
+              <article class="admin-grant-row">
+                <span class="admin-grant-row-icon" aria-hidden="true">{{ grant.group.name[:1] | upper }}</span>
+                <span class="admin-grant-row-copy">
+                  <strong>{{ grant.group.name }}</strong>
+                  <small>{{ grant.group.slug }} → mcp_{{ item.namespace }}</small>
+                </span>
+                <button
+                  class="secondary admin-revoke-grant"
+                  type="button"
+                  data-revoke-grant
+                  data-group-id="{{ grant.group_id }}"
+                  data-group-name="{{ grant.group.name }}"
+                  data-namespace="{{ item.namespace }}"
+                  data-server-name="{{ item.display_name }}"
+                  aria-label="Revoke {{ grant.group.name }} access to {{ item.display_name }}"
+                >Revoke</button>
+              </article>
+            {% endfor %}
+          {% endfor %}
+        </div>
+        <div id="mcp-grant-empty" class="admin-grant-empty" {% if grant_count %}hidden{% endif %}>
+          <strong>No group access yet</strong>
+          <span>Create a grant to make a server's tools available in chat.</span>
+        </div>
+      </div>
     </div>
-    <div class="grant-list">
-      {% for item in namespaces %}
-        {% for grant in item.group_grants %}
-          <div><span><strong>{{ grant.group.name }}</strong> → <code>mcp_{{ item.namespace }}</code></span><button class="secondary" type="button" data-revoke-grant data-group-id="{{ grant.group_id }}" data-namespace="{{ item.namespace }}">Revoke</button></div>
-        {% endfor %}
-      {% endfor %}
-    </div>
-    <p id="mcp-grant-status" class="stream-status" aria-live="polite"></p>
   </section>
+
+  <div class="admin-mcp-layout">
+    <section class="admin-panel admin-server-inventory" aria-labelledby="server-inventory-title">
+      <header class="admin-panel-header">
+        <div>
+          <h2 id="server-inventory-title">Server inventory</h2>
+          <p>Remote servers available to this workspace.</p>
+        </div>
+        <label class="admin-search">
+          <span class="sr-only">Search servers</span>
+          <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"/><path d="m13 13 3.5 3.5"/></svg>
+          <input id="mcp-server-search" type="search" placeholder="Search servers" autocomplete="off">
+        </label>
+      </header>
+
+      <div id="mcp-server-list" class="admin-server-list">
+        {% for item in namespaces %}
+          <article class="admin-server-card" data-namespace="{{ item.namespace }}" data-search-value="{{ (item.display_name ~ ' ' ~ item.namespace ~ ' ' ~ item.description ~ ' ' ~ item.url) | lower }}">
+            <div class="admin-server-mark" aria-hidden="true">{{ item.display_name[:1] | upper }}</div>
+            <div class="admin-server-content">
+              <div class="admin-server-title-row">
+                <div>
+                  <h3>{{ item.display_name }}</h3>
+                  <code>mcp_{{ item.namespace }}</code>
+                </div>
+                <span class="admin-status-pill {% if item.enabled %}enabled{% else %}disabled{% endif %}">
+                  <span></span>{{ "Enabled" if item.enabled else "Disabled" }}
+                </span>
+              </div>
+              {% if item.description %}<p class="admin-server-description">{{ item.description }}</p>{% endif %}
+              <a class="admin-server-url" href="{{ item.url }}" target="_blank" rel="noreferrer" title="{{ item.url }}">
+                <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M8 12 12 8M7 5h-1a4 4 0 0 0 0 8h2M13 15h1a4 4 0 0 0 0-8h-2"/></svg>
+                <span>{{ item.url }}</span>
+              </a>
+              <div class="admin-server-meta">
+                <span><strong>Transport</strong>{{ item.transport | replace("_", " ") }}</span>
+                <span><strong>Authentication</strong>{{ item.auth_token_env_var or "None" }}</span>
+                <span><strong>Headers</strong>{{ item.headers | length }}</span>
+                <span data-server-grant-count><strong>Group access</strong>{{ item.group_grants | length }}</span>
+              </div>
+              <button class="secondary mt-3" type="button" data-test-namespace="{{ item.namespace }}">Test tools</button>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+
+      <div id="mcp-empty-state" class="admin-empty-state" {% if namespaces %}hidden{% endif %}>
+        <span class="admin-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01"/></svg>
+        </span>
+        <h3>No MCP servers yet</h3>
+        <p>Add your first remote server to start bringing external tools into the workspace.</p>
+        <a href="#add-mcp-server" data-focus-target="display_name">Add your first server</a>
+      </div>
+      <p id="mcp-no-results" class="admin-no-results" hidden>No servers match that search.</p>
+      <p id="mcp-test-status" class="admin-form-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <aside id="add-mcp-server" class="admin-panel admin-add-panel" aria-labelledby="add-mcp-title">
+      <header class="admin-panel-header">
+        <div>
+          <p class="admin-eyebrow">New connection</p>
+          <h2 id="add-mcp-title">Add MCP server</h2>
+          <p>Configure a remote HTTP or SSE endpoint.</p>
+        </div>
+      </header>
+
+      <form id="mcp-server-form" class="admin-mcp-form" novalidate>
+        <div class="admin-form-row">
+          <label>Display name
+            <input name="display_name" maxlength="120" placeholder="e.g. Billing tools" required>
+          </label>
+          <label>Namespace
+            <div class="admin-input-prefix"><span>mcp_</span><input name="namespace" maxlength="31" pattern="[a-z][a-z0-9]{1,30}" placeholder="billing" required></div>
+          </label>
+        </div>
+
+        <label>Server URL
+          <input name="url" type="url" placeholder="https://mcp.example.com/mcp" required>
+          <small>The public HTTP or HTTPS endpoint exposed by the MCP server.</small>
+        </label>
+
+        <label>Transport
+          <select name="transport">
+            <option value="http">HTTP</option>
+            <option value="streamable_http">Streamable HTTP</option>
+            <option value="sse">Server-sent events (SSE)</option>
+          </select>
+        </label>
+
+        <label>Description <span class="admin-optional">Optional</span>
+          <textarea name="description" rows="3" placeholder="What tools does this server provide?"></textarea>
+        </label>
+
+        <div class="admin-security-note">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.9 8.1 7 10 4.1-1.9 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+          <p><strong>Secrets stay out of the database</strong><span>Enter the name of an environment variable. The server reads its token at connection time.</span></p>
+        </div>
+
+        <label>Bearer token environment variable <span class="admin-optional">Optional</span>
+          <input name="auth_token_env_var" spellcheck="false" placeholder="BILLING_MCP_TOKEN" pattern="[A-Z_][A-Z0-9_]*">
+        </label>
+
+        <label>Request headers <span class="admin-optional">Optional JSON</span>
+          <textarea name="headers" rows="3" spellcheck="false" placeholder='{"X-Client": "chatbot"}'></textarea>
+          <small>Authorization, Cookie, and other secret headers must use the token field above.</small>
+        </label>
+
+        <button class="primary admin-submit" type="submit">
+          <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></svg>
+          <span>Add MCP server</span>
+        </button>
+        <p id="mcp-form-status" class="admin-form-status" role="status" aria-live="polite"></p>
+      </form>
+    </aside>
+  </div>
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/admin-mcp.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin-mcp.js') }}"></script>
 {% endblock %}

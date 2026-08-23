@@ -32,18 +32,16 @@ class Config:
     WTF_CSRF_TIME_LIMIT = None
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     CHAT_MODEL_PROVIDER = os.getenv("CHAT_MODEL_PROVIDER", "openai")
-    CUSTOM_REASONING_GRAPH_ENABLED = env_flag("CUSTOM_REASONING_GRAPH_ENABLED")
     CUSTOM_REASONING_MAX_RESEARCH_ROUNDS = int(
         os.getenv("CUSTOM_REASONING_MAX_RESEARCH_ROUNDS", "2")
     )
     DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.5")
     DEFAULT_REASONING_EFFORT = os.getenv("DEFAULT_REASONING_EFFORT", "medium")
-    MEMORY_EMBEDDING_MODEL = os.getenv(
-        "MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"
-    )
+    MEMORY_EMBEDDING_MODEL = os.getenv("MEMORY_EMBEDDING_MODEL", "text-embedding-3-small")
     MEMORY_EMBEDDING_DIMENSIONS = int(os.getenv("MEMORY_EMBEDDING_DIMENSIONS", "1536"))
     CONVERSATION_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "24"))
-    TOOL_MAX_CONCURRENCY = int(os.getenv("TOOL_MAX_CONCURRENCY", "4"))
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+    TOOL_CALL_LOG_ARGUMENTS = env_flag("TOOL_CALL_LOG_ARGUMENTS")
     PLATFORM_ADMIN_EMAILS = tuple(
         email.strip().lower()
         for email in os.getenv("PLATFORM_ADMIN_EMAILS", "").split(",")

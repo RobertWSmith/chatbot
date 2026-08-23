@@ -5,14 +5,7 @@ import logging
 from collections.abc import Generator
 from datetime import datetime
 
-from flask import (
-    Blueprint,
-    Response,
-    jsonify,
-    render_template,
-    request,
-    stream_with_context,
-)
+from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context
 from flask_login import current_user, login_required
 
 from app.extensions import db
@@ -118,6 +111,8 @@ def send_message(thread_id: str):
         for key in ("model_name", "reasoning_effort", "reasoning_provider")
     }
 
+    user_id = current_user.id
+    persisted_thread_id = thread.id
     user_message = ChatMessage(
         thread_id=persisted_thread_id,
         user_id=user_id,
@@ -140,9 +135,7 @@ def send_message(thread_id: str):
             completed_at=utcnow(),
             model_name=generation_settings["model_name"],
             reasoning_effort=generation_settings["reasoning_effort"],
-            telemetry_metadata={
-                "reasoning_provider": generation_settings["reasoning_provider"]
-            },
+            telemetry_metadata={"reasoning_provider": generation_settings["reasoning_provider"]},
         )
     )
     db.session.commit()
@@ -196,6 +189,10 @@ def _generate_response(
         effective_settings = generation_settings or _thread_generation_settings(
             thread, user.settings.merged()
         )
+        generation_metadata = {
+            key: effective_settings[key]
+            for key in ("model_name", "reasoning_effort", "reasoning_provider")
+        }
         for event in stream_agent_response(
             user,
             thread,
@@ -212,33 +209,41 @@ def _generate_response(
                 reasoning_text.append(event["text"])
             yield _sse(event["type"], event)
 
-            assistant_message = ChatMessage(
-                thread_id=thread.id,
-                user_id=current_user.id,
-                role="assistant",
-                content="".join(assistant_text).strip(),
-                reasoning_summary="".join(reasoning_text).strip() or None,
-                message_metadata=generation_metadata,
+        assistant_message = ChatMessage(
+            thread_id=thread.id,
+            user_id=user.id,
+            role="assistant",
+            content="".join(assistant_text).strip(),
+            reasoning_summary="".join(reasoning_text).strip() or None,
+            message_metadata=generation_metadata,
+        )
+        db.session.add(assistant_message)
+        db.session.flush()
+        assistant_message_id = assistant_message.id
+        db.session.add(
+            MessageTelemetry(
+                message_id=assistant_message_id,
+                user_id=user_id,
+                thread_id=thread_id,
+                role=assistant_message.role,
+                request_received_at=request_received_at,
+                message_persisted_at=utcnow(),
+                generation_started_at=generation_started_at,
+                first_token_at=first_token_at,
+                completed_at=utcnow(),
+                token_count=token_count,
+                model_name=effective_settings["model_name"],
+                reasoning_effort=effective_settings["reasoning_effort"],
+                telemetry_metadata={"reasoning_provider": effective_settings["reasoning_provider"]},
             )
-            db.session.add(assistant_message)
-            db.session.flush()
+        )
+        for record in tool_call_records:
             db.session.add(
-                MessageTelemetry(
-                    message_id=assistant_message.id,
-                    user_id=current_user.id,
-                    thread_id=thread.id,
-                    role=assistant_message.role,
-                    request_received_at=request_received_at,
-                    message_persisted_at=utcnow(),
-                    generation_started_at=generation_started_at,
-                    first_token_at=first_token_at,
-                    completed_at=utcnow(),
-                    token_count=token_count,
-                    model_name=generation_settings["model_name"],
-                    reasoning_effort=generation_settings["reasoning_effort"],
-                    telemetry_metadata={
-                        "reasoning_provider": generation_settings["reasoning_provider"]
-                    },
+                ToolCallTelemetry(
+                    message_id=assistant_message_id,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    **record,
                 )
             )
         db.session.commit()
@@ -250,7 +255,7 @@ def _generate_response(
                 "thread_id": thread_id,
             },
         )
-    except Exception as exc:  # noqa: BLE001 - convert stream failures to SSE errors
+    except Exception as exc:
         db.session.rollback()
         logger.exception(
             "event=chat.stream.error user_id=%s thread_id=%s error_type=%s",
@@ -271,6 +276,11 @@ def _user_threads() -> list[ChatThread]:
 
 
 def _create_thread() -> ChatThread:
+    """Create and persist an empty thread for the current user.
+
+    Returns:
+        The newly persisted thread.
+    """
     defaults = current_user.settings.merged()
     thread = ChatThread(
         user_id=current_user.id,
@@ -284,16 +294,19 @@ def _create_thread() -> ChatThread:
 
 
 def _thread_generation_settings(thread: ChatThread, user_settings: dict) -> dict:
+    """Merge a thread's generation choices over the user's account defaults."""
     settings = dict(user_settings)
-    for key in ("model_name", "reasoning_effort", "reasoning_provider"):
-        if selected := getattr(thread, key, None):
-            if key == "reasoning_effort" and selected == "minimal":
-                selected = "none"
-            settings[key] = selected
+    if thread.model_name:
+        settings["model_name"] = thread.model_name
+    if thread.reasoning_effort:
+        settings["reasoning_effort"] = thread.reasoning_effort
+    if thread.reasoning_provider:
+        settings["reasoning_provider"] = thread.reasoning_provider
     return settings
 
 
 def _render_chat(selected: ChatThread, threads: list[ChatThread]):
+    """Render the chat workspace with the selected thread's generation controls."""
     chat_settings = _thread_generation_settings(selected, current_user.settings.merged())
     return render_template(
         "chat.html",
@@ -315,9 +328,7 @@ def _get_thread_or_404(thread_id: str) -> ChatThread:
     Returns:
         The matching user-owned thread.
     """
-    return ChatThread.query.filter_by(
-        id=thread_id, user_id=current_user.id
-    ).first_or_404()
+    return ChatThread.query.filter_by(id=thread_id, user_id=current_user.id).first_or_404()
 
 
 def _sse(event: str, data: dict) -> str:

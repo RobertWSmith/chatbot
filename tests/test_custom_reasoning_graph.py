@@ -120,7 +120,7 @@ class FakeMultipartReasoningAgent:
 
 def test_custom_reasoning_graph_streams_plan_and_answer(client, app, monkeypatch):
     """Ensure medium effort streams a public plan and final answer."""
-    app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
+    app.config.update(OPENAI_API_KEY="test-key")
     register(client)
 
     monkeypatch.setattr(
@@ -130,7 +130,7 @@ def test_custom_reasoning_graph_streams_plan_and_answer(client, app, monkeypatch
 
     with app.app_context():
         user = User.query.one()
-        thread = ChatThread(user_id=user.id)
+        thread = ChatThread(user_id=user.id, reasoning_provider="langgraph")
         db.session.add(thread)
         db.session.commit()
 
@@ -148,7 +148,7 @@ def test_custom_reasoning_graph_streams_plan_and_answer(client, app, monkeypatch
 
 def test_custom_reasoning_graph_forwards_live_final_answer_chunks(client, app, monkeypatch):
     """Ensure streaming models do not collapse or duplicate the final answer."""
-    app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
+    app.config.update(OPENAI_API_KEY="test-key")
     register(client)
 
     model = FakeListChatModel(
@@ -162,7 +162,7 @@ def test_custom_reasoning_graph_forwards_live_final_answer_chunks(client, app, m
 
     with app.app_context():
         user = User.query.one()
-        thread = ChatThread(user_id=user.id)
+        thread = ChatThread(user_id=user.id, reasoning_provider="langgraph")
         db.session.add(thread)
         db.session.commit()
 
@@ -175,7 +175,7 @@ def test_custom_reasoning_graph_forwards_live_final_answer_chunks(client, app, m
 
 def test_high_effort_custom_graph_can_create_memory_proposal(client, app, monkeypatch):
     """Ensure high effort can create a reviewable memory proposal."""
-    app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
+    app.config.update(OPENAI_API_KEY="test-key")
     register(client)
 
     monkeypatch.setattr(
@@ -189,7 +189,7 @@ def test_high_effort_custom_graph_can_create_memory_proposal(client, app, monkey
             **user.settings.merged(),
             "reasoning_effort": "high",
         }
-        thread = ChatThread(user_id=user.id)
+        thread = ChatThread(user_id=user.id, reasoning_provider="langgraph")
         db.session.add(thread)
         db.session.commit()
 
@@ -211,7 +211,7 @@ def test_high_effort_custom_graph_can_create_memory_proposal(client, app, monkey
 
 def test_high_effort_custom_graph_handles_no_memory_proposal(client, app, monkeypatch):
     """Ensure high effort completes when no memory proposal is warranted."""
-    app.config.update(OPENAI_API_KEY="test-key", CUSTOM_REASONING_GRAPH_ENABLED=True)
+    app.config.update(OPENAI_API_KEY="test-key")
     register(client)
 
     monkeypatch.setattr(
@@ -225,7 +225,7 @@ def test_high_effort_custom_graph_handles_no_memory_proposal(client, app, monkey
             **user.settings.merged(),
             "reasoning_effort": "high",
         }
-        thread = ChatThread(user_id=user.id)
+        thread = ChatThread(user_id=user.id, reasoning_provider="langgraph")
         db.session.add(thread)
         db.session.commit()
 
@@ -244,7 +244,6 @@ def test_mcp_enabled_custom_graph_scopes_read_tools_and_bounds_research(client, 
     """Ensure only the research node gets read-only MCP tools for two bounded passes."""
     app.config.update(
         OPENAI_API_KEY="test-key",
-        CUSTOM_REASONING_GRAPH_ENABLED=True,
         CUSTOM_REASONING_MAX_RESEARCH_ROUNDS=2,
     )
     register(client)
@@ -293,7 +292,7 @@ def test_mcp_enabled_custom_graph_scopes_read_tools_and_bounds_research(client, 
             **user.settings.merged(),
             "reasoning_effort": "high",
         }
-        thread = ChatThread(user_id=user.id)
+        thread = ChatThread(user_id=user.id, reasoning_provider="langgraph")
         db.session.add(thread)
         db.session.commit()
 

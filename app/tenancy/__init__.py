@@ -1,1 +1,1 @@
-"""Tenant groups and MCP namespace administration."""
+"""Group tenancy and MCP namespace authorization."""
