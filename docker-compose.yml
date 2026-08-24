@@ -47,6 +47,9 @@ services:
       MCP_PORTAL_DATABASE_PROVIDER: ${MCP_PORTAL_DATABASE_PROVIDER:-none}
       MCP_PORTAL_AUTH_PROVIDER: ${MCP_PORTAL_AUTH_PROVIDER:-none}
       MCP_PORTAL_PRODUCTION_REQUIRE_AUTH: ${MCP_PORTAL_PRODUCTION_REQUIRE_AUTH:-false}
+      MCP_PORTAL_WIKI_DATABASE_URL: ${MCP_PORTAL_WIKI_DATABASE_URL:-postgresql+psycopg://langgraph:langgraph@db:5432/langgraph_chat}
+      MCP_PORTAL_WIKI_SCHEMA: ${MCP_PORTAL_WIKI_SCHEMA:-mcp_portal_wiki}
+      MCP_PORTAL_WIKI_AUTO_INITIALIZE: "${MCP_PORTAL_WIKI_AUTO_INITIALIZE:-true}"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     command:
       - /bin/sh
@@ -65,6 +68,9 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   db:
