@@ -5,7 +5,15 @@ import logging
 from collections.abc import Generator
 from datetime import datetime
 
-from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context
+from flask import (
+    Blueprint,
+    Response,
+    jsonify,
+    render_template,
+    request,
+    session,
+    stream_with_context,
+)
 from flask_login import current_user, login_required
 
 from app.extensions import db
@@ -28,18 +36,24 @@ from app.validation import (
 
 bp = Blueprint("chat", __name__)
 logger = logging.getLogger(__name__)
+ACTIVE_THREAD_SESSION_KEY = "active_chat_thread_id"
 
 
 @bp.get("/chat")
 @login_required
 def chat_home():
-    """Render the most recently updated chat, creating one when needed."""
+    """Render the active chat, falling back to the most recently updated one."""
     threads = _user_threads()
     if threads:
-        selected = threads[0]
+        active_thread_id = session.get(ACTIVE_THREAD_SESSION_KEY)
+        selected = next(
+            (thread for thread in threads if thread.id == active_thread_id),
+            threads[0],
+        )
     else:
         selected = _create_thread()
         threads = [selected]
+    _remember_active_thread(selected)
     return _render_chat(selected, threads)
 
 
@@ -52,6 +66,7 @@ def chat_thread(thread_id: str):
         thread_id: Chat-thread identifier from the URL.
     """
     selected = _get_thread_or_404(thread_id)
+    _remember_active_thread(selected)
     return _render_chat(selected, _user_threads())
 
 
@@ -60,6 +75,7 @@ def chat_thread(thread_id: str):
 def create_thread():
     """Create an empty chat thread for the current user."""
     thread = _create_thread()
+    _remember_active_thread(thread)
     return (
         jsonify(
             {
@@ -87,6 +103,7 @@ def send_message(thread_id: str):
     """
     request_received_at = utcnow()
     thread = _get_thread_or_404(thread_id)
+    _remember_active_thread(thread)
     payload = request.get_json(silent=True) or {}
     prompt = (payload.get("message") or "").strip()
     if not prompt:
@@ -114,6 +131,7 @@ def send_message(thread_id: str):
     thread.reasoning_effort = generation_settings["reasoning_effort"]
     thread.reasoning_provider = generation_settings["reasoning_provider"]
     thread.mcp_namespace_filter = namespace_filter
+    thread.updated_at = request_received_at
     generation_settings["mcp_namespaces"] = namespace_filter
     generation_metadata = {
         key: generation_settings[key]
@@ -308,6 +326,15 @@ def _create_thread() -> ChatThread:
     db.session.add(thread)
     db.session.commit()
     return thread
+
+
+def _remember_active_thread(thread: ChatThread) -> None:
+    """Remember the current user's selected chat in the browser session.
+
+    Args:
+        thread: User-owned chat selected by the current request.
+    """
+    session[ACTIVE_THREAD_SESSION_KEY] = thread.id
 
 
 def _thread_generation_settings(thread: ChatThread, user_settings: dict) -> dict:

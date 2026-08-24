@@ -99,6 +99,51 @@ def test_cross_user_thread_access_is_blocked(client):
     assert response.status_code == 404
 
 
+def test_chat_home_restores_the_last_selected_thread(client):
+    """Ensure leaving Chat does not discard the explicitly selected thread."""
+    register(client)
+    first_thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+    client.post("/api/chat/threads")
+
+    selected = client.get(f"/chat/{first_thread_id}")
+    assert f'data-thread-id="{first_thread_id}"'.encode() in selected.data
+
+    client.get("/memory")
+    restored = client.get("/chat")
+
+    assert restored.status_code == 200
+    assert f'data-thread-id="{first_thread_id}"'.encode() in restored.data
+
+
+def test_sending_a_message_refreshes_thread_recency(client, app):
+    """Ensure an active conversation moves to the top of the thread list."""
+    register(client)
+    first_thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+    second_thread_id = client.post("/api/chat/threads").get_json()["thread"]["id"]
+    with app.app_context():
+        first_thread = db.session.get(ChatThread, first_thread_id)
+        second_thread = db.session.get(ChatThread, second_thread_id)
+        first_thread.title = "Older thread"
+        second_thread.title = "Newer thread"
+        first_thread.updated_at = utcnow().replace(year=2024)
+        second_thread.updated_at = utcnow().replace(year=2025)
+        db.session.commit()
+
+    response = client.post(
+        f"/api/chat/threads/{first_thread_id}/messages",
+        json={"message": "Make this the active conversation"},
+    )
+
+    assert response.status_code == 200
+    with app.app_context():
+        most_recent = (
+            ChatThread.query.order_by(ChatThread.updated_at.desc())
+            .with_entities(ChatThread.id)
+            .first()
+        )
+        assert most_recent == (first_thread_id,)
+
+
 def test_saved_reasoning_summary_is_marked_for_markdown_rendering(client, app):
     """Ensure persisted reasoning summaries render through the Markdown path."""
     register(client)

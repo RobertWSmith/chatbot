@@ -45,6 +45,15 @@ def test_markdown_links_open_in_new_tabs(client):
     assert b'link.setAttribute("rel", "noopener noreferrer")' in response.data
 
 
+def test_active_stream_is_protected_from_accidental_navigation(client):
+    """Ensure the chat page warns before navigation interrupts a response."""
+    response = client.get("/static/js/chat.js")
+
+    assert response.status_code == 200
+    assert b'window.addEventListener("beforeunload", protectActiveStream)' in response.data
+    assert b'event.returnValue = ""' in response.data
+
+
 def test_tool_filter_can_escape_the_composer_surface(client):
     """Ensure the upward-opening tool filter is not clipped by its composer ancestor."""
     response = client.get("/static/css/app.css")

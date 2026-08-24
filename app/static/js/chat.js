@@ -19,6 +19,13 @@ if (form) {
   const reasoningSelect = document.querySelector("#reasoning-select");
   const reasoningProviderSelect = document.querySelector("#reasoning-provider-select");
   const toolFilter = initializeToolFilter(document.querySelector("#tool-filter"));
+  let isStreamingResponse = false;
+
+  function protectActiveStream(event) {
+    if (!isStreamingResponse) return;
+    event.preventDefault();
+    event.returnValue = "";
+  }
 
   function resizeComposer() {
     input.style.height = "auto";
@@ -26,6 +33,12 @@ if (form) {
   }
 
   function setStreaming(isStreaming) {
+    if (isStreaming && !isStreamingResponse) {
+      window.addEventListener("beforeunload", protectActiveStream);
+    } else if (!isStreaming && isStreamingResponse) {
+      window.removeEventListener("beforeunload", protectActiveStream);
+    }
+    isStreamingResponse = isStreaming;
     input.disabled = isStreaming;
     submitButton.disabled = isStreaming;
     modelSelect.disabled = isStreaming;
