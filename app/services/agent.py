@@ -146,7 +146,11 @@ async def _astream_langgraph_response(
 
     from app.services.tool_logging import ToolCallLoggingCallback
 
-    model = _build_chat_model(settings, provider_reasoning=True)
+    model = _build_chat_model(
+        settings,
+        provider_reasoning=True,
+        tool_capable=True,
+    )
     user_id = getattr(user, "id", None)
     mcp_result = (
         await load_authorized_mcp_tools(user_id, settings.get("mcp_namespaces"))
@@ -370,7 +374,11 @@ async def _astream_custom_reasoning_graph_response(
     )
     mcp_research_agent = None
     if research_tools:
-        research_model = _build_chat_model(settings, provider_reasoning=False)
+        research_model = _build_chat_model(
+            settings,
+            provider_reasoning=False,
+            tool_capable=True,
+        )
         mcp_research_agent = _build_mcp_research_agent(
             research_model,
             research_tools,
@@ -521,12 +529,20 @@ def _build_custom_reasoning_graph(
     return graph.compile()
 
 
-def _build_chat_model(settings: dict, *, provider_reasoning: bool) -> Any:
+def _build_chat_model(
+    settings: dict,
+    *,
+    provider_reasoning: bool,
+    tool_capable: bool = False,
+) -> Any:
     """Build the configured chat model.
 
     Args:
         settings: Effective user settings.
         provider_reasoning: Whether to enable provider-native reasoning.
+        tool_capable: Whether the model will receive callable tools. Tool-capable
+            OpenAI models use the Responses API so reasoning models can invoke
+            function tools without the Chat Completions API restriction.
 
     Returns:
         A configured LangChain chat model.
@@ -544,6 +560,8 @@ def _build_chat_model(settings: dict, *, provider_reasoning: bool) -> Any:
         "model": settings["model_name"],
         "api_key": current_app.config.get("OPENAI_API_KEY") or None,
     }
+    if tool_capable:
+        kwargs["use_responses_api"] = True
     if provider_reasoning:
         kwargs["model_kwargs"] = {"parallel_tool_calls": True}
         kwargs["reasoning"] = {

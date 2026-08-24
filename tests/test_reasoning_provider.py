@@ -107,8 +107,8 @@ def test_agent_routes_each_reasoning_provider(client, app, monkeypatch):
     assert calls == [("openai", "openai"), ("langgraph", "langgraph")]
 
 
-def test_parallel_tool_calls_is_only_set_for_tool_enabled_agent(app, monkeypatch):
-    """Ensure only provider-native tool agents receive parallel tool settings."""
+def test_tool_capable_models_use_responses_api_without_forcing_provider_reasoning(app, monkeypatch):
+    """Ensure custom MCP research can call tools without provider reasoning."""
     captured_kwargs = []
 
     class FakeOpenAIModel:
@@ -127,13 +127,27 @@ def test_parallel_tool_calls_is_only_set_for_tool_enabled_agent(app, monkeypatch
 
     with app.app_context():
         agent_service._build_chat_model(settings, provider_reasoning=False)
-        agent_service._build_chat_model(settings, provider_reasoning=True)
+        agent_service._build_chat_model(
+            settings,
+            provider_reasoning=False,
+            tool_capable=True,
+        )
+        agent_service._build_chat_model(
+            settings,
+            provider_reasoning=True,
+            tool_capable=True,
+        )
 
-    custom_graph_kwargs, tool_agent_kwargs = captured_kwargs
+    custom_graph_kwargs, research_agent_kwargs, provider_agent_kwargs = captured_kwargs
     assert "model_kwargs" not in custom_graph_kwargs
     assert "reasoning" not in custom_graph_kwargs
-    assert tool_agent_kwargs["model_kwargs"] == {"parallel_tool_calls": True}
-    assert tool_agent_kwargs["reasoning"] == {
+    assert "use_responses_api" not in custom_graph_kwargs
+    assert research_agent_kwargs["use_responses_api"] is True
+    assert "model_kwargs" not in research_agent_kwargs
+    assert "reasoning" not in research_agent_kwargs
+    assert provider_agent_kwargs["use_responses_api"] is True
+    assert provider_agent_kwargs["model_kwargs"] == {"parallel_tool_calls": True}
+    assert provider_agent_kwargs["reasoning"] == {
         "effort": "medium",
         "summary": "auto",
     }
